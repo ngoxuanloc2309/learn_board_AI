@@ -9,11 +9,11 @@ extern "C" {
 #include <stdint.h>
 
 #define SX_I2S_OK           0
-#define SX_I2S_ERR_PARAM   (-1)
-#define SX_I2S_ERR_STATE   (-2)
-#define SX_I2S_ERR_BUS     (-3)
-#define SX_I2S_ERR_TIMEOUT (-4)
-#define SX_I2S_ERR_NOMEM  (-5)
+#define SX_I2S_ERR_PARAM    (-1)
+#define SX_I2S_ERR_STATE    (-2)
+#define SX_I2S_ERR_BUS      (-3)
+#define SX_I2S_ERR_TIMEOUT  (-4)
+#define SX_I2S_ERR_NOMEM    (-5)
 
 typedef enum {
     SX_I2S_MONO = 1,
