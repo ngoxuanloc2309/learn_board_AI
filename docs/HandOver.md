@@ -1,7 +1,7 @@
 # Handover - AI Learning Device
 
 > File này do mọi phiên làm việc (Claude hoặc AI khác) cập nhật ở cuối phiên. Quy tắc: xem `rule_code.md` mục 3.
-> Cập nhật lần cuối: 2026-11-04 (phiên 1).
+> Cập nhật lần cuối: 2026-11-04 (phiên 3).
 
 ## 1. Đọc trước khi làm
 
@@ -23,14 +23,14 @@
 
 | Hạng mục | Trạng thái |
 |---|---|
-| Khung project ESP-IDF, CMake nối các layer | Xong, **đã build thành công** trong sandbox (ESP-IDF v5.4.3) |
+| Khung project ESP-IDF, CMake nối các layer | Xong ở phiên 3: **đã build thành công** trong sandbox (ESP-IDF v5.4.3, target esp32s3, 0 cảnh báo). Phiên 1 ghi đã build nhưng repo thật lúc đó chưa có các file CMake này |
 | Phase 1 trên máy của chủ dự án (`set-target`, build, flash) | **Chưa làm** (chủ dự án sẽ làm sau khi dev tương đối xong) |
-| `board.h` (chân, số cổng) | Có, **chân chưa xác minh trên V15** |
-| Peripheral `sx_gpio`, `sx_i2c`, `sx_spi`, `sx_i80` | Hợp đồng và hiện thực ESP32-S3 đã viết, **compile/link OK, chưa chạy trên phần cứng** |
-| I2S, PWM, UART, SD card (`sx_sdcard`) | Chưa có |
+| `board.h` (chân, số cổng) | **Chỉ là stub** (enum `BoardType_t`), chưa có chân nào, chưa có nhãn `REF/DESIGN/GIVEN` hay `BOARD_PINMAP_VERIFIED`. Phiên 1 mô tả đầy đủ hơn nhưng nội dung đó không có trong repo |
+| Peripheral `sx_gpio`, `sx_i2c`, `sx_spi`, `sx_i80`, `sx_i2s` | Hợp đồng và hiện thực ESP32-S3 đã viết, **đã compile trong build đầy đủ (phiên 3), chưa chạy trên phần cứng**. Chưa kiểm chứng link vào firmware vì chưa có code nào gọi chúng |
+| PWM, UART, SD card (`sx_sdcard`) | Chưa có |
 | Modules (screenHMI, touch, speaker, storage) | Chỉ là file rỗng |
 | Services (http, AI) | Chỉ là file rỗng |
-| App tasks | Chỉ là file rỗng; `app_start()` log tên/phiên bản và gọi `board_init()` (rỗng) |
+| App tasks | Chỉ là file rỗng. `app_start()` và `board_init()` **chưa tồn tại**; `app_main()` rỗng |
 | LVGL, Wi-Fi, OTA | Chưa bắt đầu |
 
 ### Kiến trúc (tóm tắt, chi tiết ở Firmware_Construction.md)
@@ -92,7 +92,19 @@ Quyết định đã chốt với chủ dự án:
 
 ## 6. Việc đang chờ chủ dự án
 
-Các lệnh đổi tên (Git trên Windows không nhận đổi hoa/thường, và các file rỗng chưa được di chuyển):
+Phiên 3 đã đổi tên hai file trong bản sao của sandbox. Trên máy của chủ dự án cần chạy (Git trên Windows không nhận đổi hoa/thường):
+
+```powershell
+git mv -f LoganSDK/services/CmakeLists.txt LoganSDK/services/CMakeLists.txt
+git mv LoganSDK/app/user/screen_app/screem_app.c LoganSDK/app/user/screen_app/screen_app.c
+```
+
+Chép đè các `CMakeLists.txt` đã present ở phiên 3 (root, `main`, `app`, `board`, `modules`, `peripherals`, `platform/esp32s3` là file mới, `services`, `utils`).
+
+Dọn tùy chọn, chờ chủ dự án duyệt (các file rỗng này không nằm trong `SRCS`, không ảnh hưởng build):
+`LoganSDK/components/peripherals/{gpio/sx_gpio.c,i2c/sx_i2c.c,i2s/sx_i2s.c,i80/sx_i80.c,spi/sx_spi.c}` và `LoganSDK/platform/CMakeLists.txt` (rỗng, không phải component).
+
+Danh sách lệnh đổi tên cũ của phiên 1 (đã lỗi thời, 4 file `esp32s3_*.c` đã ở đúng chỗ):
 
 ```powershell
 git mv LoganSDK/components/peripherals/gpio/sx_gpio.c LoganSDK/platforms/esp32s3/gpio/esp32s3_gpio.c
@@ -110,9 +122,18 @@ Cần quyết định hoặc cung cấp:
 - Mục đích của thư mục `libs/` (đang trống, chưa nối vào build).
 - Schematic V15 hoặc kết quả xác minh chân, loại PSRAM, microphone, RS485.
 
+Quyết định còn mở:
+
+- Tên thư mục chip: repo dùng `LoganSDK/platform/esp32s3` (số ít) nhưng `Firmware_Construction.md` và một số tài liệu ghi `platforms/`. Phiên 3 giữ theo repo (code). Đề xuất sửa tài liệu cho khớp, chưa sửa vì chưa được duyệt.
+- Tên file tài liệu: repo là `HandOver.md`, `RuleCode.md`, `RuleAgent.md`; các tài liệu vẫn nhắc `handover.md`, `rule_code.md`.
+- Khôi phục `board.h` đầy đủ (nhãn `REF/DESIGN/GIVEN`, `BOARD_PINMAP_VERIFIED=0`), `board_init()` và `app_start()`; chưa làm vì chưa được yêu cầu.
+
 ## 7. Kế hoạch tiếp theo
 
-Thứ tự đề xuất (mỗi bước phải build được trước khi sang bước sau):
+Thứ tự đề xuất (mỗi bước phải build được trước khi sang bước sau). Bước 0 đã xong ở phiên 3 (CMake nối layer, build OK).
+
+0. (Xong) Nối CMake và build.
+0b. Khôi phục `board.h`, `board.c` (`board_init()`), `app.c` (`app_start()`), nối từ `app_main()`.
 
 1. Hợp đồng và hiện thực còn thiếu cho Phase 2: `sx_i2s` (speaker), `sx_pwm` (đèn nền), `sx_sdcard` (SD + FATFS), `sx_uart` (RS485 - chờ xác minh chân). Cân nhắc ngắt cho `sx_gpio`.
 2. Modules: `screenHMI` (chuỗi khởi tạo ST7796 qua `sx_i80`, reset/backlight), `touch` (FT6336U qua `sx_i2c`), `storage`, `speaker`.
@@ -148,3 +169,23 @@ Kế hoạch tiếp theo:
 
 - Đăng ký đúng component peripheral/platform trong CMake, build lại để bắt lỗi compile của I2S,
   sau đó mới nối module speaker.
+
+### Phiên 3 (2026-11-04)
+
+Đã làm:
+
+- Clone repo, đọc `HandOver.md`, `RuleCode.md`, `RuleAgent.md`, `Firmware_Construction.md`, `Product_Construction.md`; đối chiếu với repo thật và báo các điểm lệch (xem mục 3 và 6).
+- Nối CMake theo bảng phụ thuộc trong `Firmware_Construction.md`: root `CMakeLists.txt` khai báo `EXTRA_COMPONENT_DIRS` cho 7 component (`app`, `board`, `modules`, `peripherals`, `esp32s3`, `services`, `utils`; không gồm `libs/`); viết `CMakeLists.txt` cho `board`, `modules`, `peripherals` (chỉ header), `platform/esp32s3` (mới, `PRIV_REQUIRES driver esp_lcd`), `services`, `utils`; `main` thêm `REQUIRES app`; sửa comment trong `app/CMakeLists.txt` cho đúng đường dẫn `platform/esp32s3`.
+- Đổi tên `services/CmakeLists.txt` thành `CMakeLists.txt` và `screem_app.c` thành `screen_app.c` (cần thiết để build; chỉ đổi tên, các file rỗng).
+- Dựng ESP-IDF v5.4.3 trong sandbox theo mục 8, chạy `idf.py set-target esp32s3` và `idf.py build` trên bản sao: **build thành công, 0 cảnh báo**. Cả 5 file `esp32s3_*.c` (gồm `esp32s3_i2s.c`), `cqueue.c`, `sx_filter.c`, các file rỗng của modules/services/app đều được biên dịch; `libesp32s3.a` có đủ symbol `sx_gpio_*`, `sx_i2c_*`, `sx_i2s_*`, `sx_i80_*`, `sx_spi_*`.
+
+Chưa làm hoặc chưa kiểm chứng:
+
+- Chưa chạy trên phần cứng, chưa flash. Chưa `set-target` trong repo thật của chủ dự án.
+- Chưa kiểm chứng các hàm driver được link vào ELF cuối (chưa có code gọi chúng, linker bỏ qua object không được tham chiếu).
+- Chưa thử kiểm tra quy tắc phụ thuộc bằng cách cố ý include ngược chiều.
+- Chưa sửa `board.h`, `board.c`, `app.c`, tài liệu (ngoài `HandOver.md`).
+
+Điểm cần lưu ý:
+
+- `peripherals` là component chỉ có header nên không sinh thư viện `.a`; điều này là đúng.

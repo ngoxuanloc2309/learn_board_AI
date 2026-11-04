@@ -1,0 +1,7 @@
+# Layer 3 - services: http and AI backend/frontend. No hardware knowledge.
+# Add esp_http_client, esp-tls and similar to REQUIRES only when the code really uses them.
+idf_component_register(SRCS "AI/AI_backend.c"
+                            "AI/AI_frontend.c"
+                            "http/http.c"
+                    INCLUDE_DIRS "AI" "http"
+                    REQUIRES utils)

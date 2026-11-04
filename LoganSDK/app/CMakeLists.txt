@@ -1,5 +1,5 @@
 # Layer 4 - app: tasks and start-up. The only layer allowed to see every other layer.
-# esp32s3 (LoganSDK/platforms/esp32s3) is listed so that the chip implementation is linked into the firmware.
+# esp32s3 (LoganSDK/platform/esp32s3) is listed so that the chip implementation is linked into the firmware.
 # The component name is the directory name. To use another chip, replace this name.
 idf_component_register(SRCS "app.c"
                             "user/AI_app/AI_app.c"
