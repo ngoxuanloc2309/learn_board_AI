@@ -1,7 +1,7 @@
 # Handover - AI Learning Device
 
 > File này do mọi phiên làm việc (Claude hoặc AI khác) cập nhật ở cuối phiên. Quy tắc: xem `rule_code.md` mục 3.
-> Cập nhật lần cuối: 2026-11-04 (phiên 3).
+> Cập nhật lần cuối: 2026-11-04 (phiên 4).
 
 ## 1. Đọc trước khi làm
 
@@ -27,7 +27,7 @@
 | Phase 1 trên máy của chủ dự án (`set-target`, build, flash) | **Chưa làm** (chủ dự án sẽ làm sau khi dev tương đối xong) |
 | `board.h` (chân, số cổng) | **Chỉ là stub** (enum `BoardType_t`), chưa có chân nào, chưa có nhãn `REF/DESIGN/GIVEN` hay `BOARD_PINMAP_VERIFIED`. Phiên 1 mô tả đầy đủ hơn nhưng nội dung đó không có trong repo |
 | Peripheral `sx_gpio`, `sx_i2c`, `sx_spi`, `sx_i80`, `sx_i2s` | Hợp đồng và hiện thực ESP32-S3 đã viết, **đã compile trong build đầy đủ (phiên 3), chưa chạy trên phần cứng**. Chưa kiểm chứng link vào firmware vì chưa có code nào gọi chúng |
-| PWM, UART, SD card (`sx_sdcard`) | Chưa có |
+| PWM, UART, SD card (`sx_sdcard`) | Hợp đồng và hiện thực ESP32-S3 đã viết ở phiên 4; chưa build lại và chưa chạy phần cứng |
 | Modules (screenHMI, touch, speaker, storage) | Chỉ là file rỗng |
 | Services (http, AI) | Chỉ là file rỗng |
 | App tasks | Chỉ là file rỗng. `app_start()` và `board_init()` **chưa tồn tại**; `app_main()` rỗng |
@@ -135,9 +135,30 @@ Thứ tự đề xuất (mỗi bước phải build được trước khi sang b
 0. (Xong) Nối CMake và build.
 0b. Khôi phục `board.h`, `board.c` (`board_init()`), `app.c` (`app_start()`), nối từ `app_main()`.
 
-1. Hợp đồng và hiện thực còn thiếu cho Phase 2: `sx_i2s` (speaker), `sx_pwm` (đèn nền), `sx_sdcard` (SD + FATFS), `sx_uart` (RS485 - chờ xác minh chân). Cân nhắc ngắt cho `sx_gpio`.
+1. (Đã viết hợp đồng và hiện thực, chưa build lại) `sx_pwm`, `sx_sdcard`, `sx_uart`; `sx_gpio` có callback ngắt. Cần build trên môi trường ESP-IDF và review API trước khi dùng.
 2. Modules: `screenHMI` (chuỗi khởi tạo ST7796 qua `sx_i80`, reset/backlight), `touch` (FT6336U qua `sx_i2c`), `storage`, `speaker`.
 3. Bring-up trên phần cứng (chủ dự án chạy `set-target`, build, flash): xác minh Flash/PSRAM, chân, LCD hiển thị, touch đọc được, SD mount, speaker ra tiếng, thử mic.
+
+### Phiên 4 (2026-11-04)
+
+Đã làm:
+
+- Thêm hợp đồng và hiện thực ESP32-S3 cho `sx_pwm` bằng LEDC, `sx_sdcard` bằng SPI + FATFS,
+  và `sx_uart` cho UART thường hoặc RS485 half-duplex.
+- Thêm đăng ký/gỡ callback ISR cho `sx_gpio`, phục vụ chân INT của touch.
+- Nối các header và driver mới vào CMake của component `peripherals` và `platform/esp32s3`.
+- Cập nhật tài liệu kiến trúc; không đưa pinout V15 vào code vì chưa được xác minh.
+
+Chưa kiểm chứng:
+
+- Máy hiện tại không có `idf.py` hoặc `IDF_PATH`, nên chưa build lại sau các thay đổi phiên 4.
+- Chưa chạy trên phần cứng; chân PWM, SD và RS485 vẫn chưa xác minh.
+- `screem_app.c` vẫn chưa được đổi tên trong repo thực tế dù handover phiên 3 ghi đã đổi.
+
+Kế hoạch tiếp theo:
+
+- Chạy `idf.py set-target esp32s3` và `idf.py build` trong môi trường ESP-IDF 5.4.3.
+- Sau khi build đạt, nối các module `screenHMI`, `storage`, `speaker` và dùng cấu hình board được xác minh.
 4. Wi-Fi.
 5. Phase 3 (LVGL, màn hình) trở đi theo roadmap trong Product_Construction.md.
 

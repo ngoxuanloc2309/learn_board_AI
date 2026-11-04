@@ -113,12 +113,15 @@ Phase 1 hiện ở trạng thái: khung đã nối build; **chưa chạy `set-ta
 | `sx_i2c` | Có (driver I2C master mới) | Lệnh đọc/ghi không phân biệt được NACK với lỗi bus; dùng `sx_i2c_probe` |
 | `sx_spi` | Có | CS mềm qua `sx_gpio`; `timeout_ms` không có hiệu lực trên nền này |
 | `sx_i80` | Có | Chỉ mức bus và panel IO; chuỗi khởi tạo ST7796 thuộc module `screenHMI` |
+| `sx_i2s` | Có | Speaker I2S TX; chân vẫn chưa xác minh |
+| `sx_pwm` | Có | LEDC đèn nền; timer, channel và chân do board cung cấp |
+| `sx_sdcard` | Có | Mount FATFS qua SPI; chân và host do board cung cấp |
+| `sx_uart` | Có | UART thường hoặc RS485 half-duplex; chân RS485 vẫn chưa xác minh |
 
-Đã dựng và build với ESP-IDF v5.4.3 (biên dịch và link thành công, không cảnh báo từ code LoganSDK).
+Các hợp đồng trên đã được nối vào component CMake. Chưa build lại sau khi bổ sung các driver mới vì môi trường hiện tại không có `idf.py` hoặc `IDF_PATH`.
 **Chưa chạy trên phần cứng.**
 
-Chưa có hợp đồng cho: I2S (speaker), PWM (đèn nền), UART (RS485), và thẻ nhớ (gắn FATFS cần
-một hợp đồng riêng, ví dụ `sx_sdcard`, vì `sx_spi` thuần không đủ để mount hệ thống tệp).
+`sx_gpio` có thêm đăng ký và gỡ callback ngắt ISR. Callback phải ngắn, không block và chỉ gọi API ISR-safe.
 
 ## 9. Việc còn mở
 

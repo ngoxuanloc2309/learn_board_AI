@@ -70,8 +70,7 @@ Trả lời chủ dự án bằng tiếng Việt, trung thực, ngắn gọn, n�
 ## 7. Prompt khởi động (copy cho mỗi phiên mới)
 
 ```text
-Bạn tiếp quản dự án AI Learning Device. Đọc docs/RuleAgent.md trong repo
-https://github.com/ngoxuanloc2309/learn_board_AI.git và làm đúng quy trình
+Bạn tiếp quản dự án AI Learning Device. Đọc docs/RuleAgent.md trong `Thư mục làm việc: E:\prj_canhan\Learning_board\learn_board_AI` và làm đúng quy trình
 "Đầu phiên" ở đó (đọc handover.md, đối chiếu repo, tóm tắt rồi chờ tôi xác nhận).
 
 Nhiệm vụ phiên này: <điền nhiệm vụ cụ thể, lấy từ "Kế hoạch tiếp theo" trong handover.md>

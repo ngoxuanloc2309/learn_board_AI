@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include "sx_gpio.h"
 #include "driver/gpio.h"
+#include "esp_err.h"
 
 static bool is_input_mode(sx_gpio_mode_t mode)
 {
@@ -80,6 +81,41 @@ int sx_gpio_write(const sx_gpio_pin_t *pin, sx_gpio_value_t value)
 {
     if (!is_valid_pin(pin) || (pin->mode != SX_GPIO_MODE_OUTPUT_PP)) {
         return SX_GPIO_ERR_PARAM;
+    }
+
+    static gpio_int_type_t interrupt_type(sx_gpio_interrupt_t type)
+    {
+        switch (type) {
+        case SX_GPIO_INTERRUPT_POSEDGE: return GPIO_INTR_POSEDGE;
+        case SX_GPIO_INTERRUPT_NEGEDGE: return GPIO_INTR_NEGEDGE;
+        case SX_GPIO_INTERRUPT_ANYEDGE: return GPIO_INTR_ANYEDGE;
+        case SX_GPIO_INTERRUPT_LOW_LEVEL: return GPIO_INTR_LOW_LEVEL;
+        case SX_GPIO_INTERRUPT_HIGH_LEVEL: return GPIO_INTR_HIGH_LEVEL;
+        default: return GPIO_INTR_DISABLE;
+        }
+    }
+
+    int sx_gpio_set_interrupt(const sx_gpio_pin_t *pin, sx_gpio_interrupt_t type,
+                              sx_gpio_isr_callback_t callback, void *arg)
+    {
+        if (!is_valid_pin(pin) || !is_input_mode(pin->mode) ||
+            type <= SX_GPIO_INTERRUPT_DISABLED || type > SX_GPIO_INTERRUPT_HIGH_LEVEL ||
+            callback == NULL) {
+            return SX_GPIO_ERR_PARAM;
+        }
+        esp_err_t error = gpio_install_isr_service(ESP_INTR_FLAG_IRAM);
+        if (error != ESP_OK && error != ESP_ERR_INVALID_STATE) return SX_GPIO_ERR_HW;
+        if (gpio_set_intr_type((gpio_num_t)pin->pin, interrupt_type(type)) != ESP_OK ||
+            gpio_isr_handler_add((gpio_num_t)pin->pin, callback, arg) != ESP_OK) {
+            return SX_GPIO_ERR_HW;
+        }
+        return SX_GPIO_OK;
+    }
+
+    int sx_gpio_remove_interrupt(const sx_gpio_pin_t *pin)
+    {
+        if (!is_valid_pin(pin) || !is_input_mode(pin->mode)) return SX_GPIO_ERR_PARAM;
+        return gpio_isr_handler_remove((gpio_num_t)pin->pin) == ESP_OK ? SX_GPIO_OK : SX_GPIO_ERR_HW;
     }
     if ((value != SX_GPIO_LOW) && (value != SX_GPIO_HIGH)) {
         return SX_GPIO_ERR_PARAM;
