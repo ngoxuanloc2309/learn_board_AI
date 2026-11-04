@@ -5,10 +5,11 @@
 
 ## 1. Đọc trước khi làm
 
-1. `docs/rule_code.md` - quy tắc bàn giao file và viết comment.
-2. `docs/Firmware_Construction.md` - kiến trúc layer, quy tắc phụ thuộc, trạng thái phần cứng.
-3. `docs/Product_Construction.md` - đặc tả sản phẩm.
-4. Repo tham khảo phong cách của chủ dự án: https://github.com/ngoxuanloc2309/simple_plc.git (mô hình layer, hợp đồng `sx_*`).
+1. `docs/RuleAgent.md` - cách làm việc của AI/agent: quy trình đầu/cuối phiên, nguyên tắc bắt buộc.
+2. `docs/rule_code.md` - quy tắc bàn giao file và viết comment.
+3. `docs/Firmware_Construction.md` - kiến trúc layer, quy tắc phụ thuộc, trạng thái phần cứng.
+4. `docs/Product_Construction.md` - đặc tả sản phẩm.
+5. Repo tham khảo phong cách của chủ dự án: https://github.com/ngoxuanloc2309/simple_plc.git (mô hình layer, hợp đồng `sx_*`).
 
 ## 2. Thông tin dự án (ngắn)
 
@@ -69,7 +70,7 @@ Cách xác minh: schematic đúng revision V15, hoặc đo thực tế, hoặc `
 - Viết CMake cho từng layer; root `CMakeLists.txt` khai báo `EXTRA_COMPONENT_DIRS`.
 - Viết `board.h` (nhãn REF/DESIGN/GIVEN cho từng chân), `board_init()` rỗng, `app_start()`.
 - Viết hợp đồng và hiện thực `sx_gpio`, `sx_i2c`, `sx_spi`, `sx_i80`.
-- Viết `rule_code.md`, `Firmware_Construction.md`, `handover.md`.
+- Viết `rule_code.md`, `Firmware_Construction.md`, `handover.md`, `RuleAgent.md`.
 - Dựng ESP-IDF v5.4.3 + toolchain trong sandbox và build thành công. Build bắt được một lỗi: `REQUIRES platforms` sai, phải là `esp32s3`; đã sửa.
 
 Quyết định đã chốt với chủ dự án:
@@ -127,3 +128,23 @@ Thứ tự đề xuất (mỗi bước phải build được trước khi sang b
   - cài Python requirements trực tiếp từ PyPI (`pip install --index-url https://pypi.org/simple -r tools/requirements/requirements.core.txt`);
   - cài `cmake==3.30.5` và `ninja` bằng pip (CMake 4.x chưa dùng cho IDF 5.4).
 - Build thử trên bản sao của repo, không `set-target` trong repo thật.
+
+### Phiên 2 (2026-11-04)
+
+Đã làm:
+
+- Hoàn thiện hợp đồng `sx_i2s` cho speaker I2S TX: init, start, stop, write và deinit.
+- Hoàn thiện hiện thực ESP32-S3 bằng I2S standard driver của ESP-IDF: Philips slot, mono/stereo,
+  8/16/24/32 bit, timeout và ánh xạ lỗi.
+- Chạy lệnh build ESP-IDF thành công cho cấu hình hiện tại.
+
+Chưa xác minh:
+
+- Cấu hình build hiện tại chưa đăng ký các component LoganSDK, nên log build không biên dịch
+  `esp32s3_i2s.c`; driver chưa được compile/link thực tế.
+- Chưa chạy trên phần cứng; chân I2S vẫn chưa xác minh trên revision V15.
+
+Kế hoạch tiếp theo:
+
+- Đăng ký đúng component peripheral/platform trong CMake, build lại để bắt lỗi compile của I2S,
+  sau đó mới nối module speaker.

@@ -29,7 +29,7 @@
 
 Dự án được làm qua nhiều phiên bởi nhiều Claude và AI khác nhau, nên:
 
-- **Đầu phiên**: đọc `docs/handover.md`, `docs/rule_code.md`, `docs/Firmware_Construction.md` trước khi làm gì.
+- **Đầu phiên**: làm theo `docs/RuleAgent.md`; đọc `docs/handover.md`, `docs/rule_code.md`, `docs/Firmware_Construction.md` trước khi làm gì.
 - **Cuối phiên**: cập nhật `docs/handover.md` và present file này cùng các file code đã đổi. Gồm:
   - trạng thái hiện tại của project;
   - tóm tắt việc đã làm trong phiên (thêm một mục mới vào nhật ký, không xóa mục cũ);
