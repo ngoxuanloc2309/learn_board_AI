@@ -1,7 +1,7 @@
 # Handover - AI Learning Device
 
 > File này do mọi phiên làm việc (Claude hoặc AI khác) cập nhật ở cuối phiên. Quy tắc: xem `rule_code.md` mục 3.
-> Cập nhật lần cuối: 2026-11-05 (phiên 5).
+> Cập nhật lần cuối: 2026-11-05 (phiên 6).
 
 ## 1. Đọc trước khi làm
 
@@ -29,8 +29,10 @@
 | Peripheral `sx_gpio`, `sx_i2c`, `sx_spi`, `sx_i80`, `sx_i2s` | Hợp đồng và hiện thực ESP32-S3 đã viết, **đã compile trong build đầy đủ (phiên 3), chưa chạy trên phần cứng**. Chưa kiểm chứng link vào firmware vì chưa có code nào gọi chúng |
 | Peripheral `sx_pwm`, `sx_uart`, ngắt của `sx_gpio` | Viết ở phiên 4. Phiên 5: sửa lỗi compile ở `esp32s3_gpio.c`, **build đầy đủ thành công (0 cảnh báo)**; chưa chạy trên phần cứng |
 | Module `sdcard` (`components/modules/sdcard`) | Phiên 5: block device SD-SPI trên `sx_spi`. **Đã build trên target esp32s3 (0 cảnh báo) và đã chạy thử trên máy host với thẻ SD giả lập** (SDHC, SDSC, MMC, không có thẻ, cấu hình sai); **chưa thử với thẻ thật**. Chưa có hệ thống tệp (FatFs) |
-| Modules (screenHMI, touch, speaker, storage) | Chỉ là file rỗng |
+| Modules (screenHMI, touch, speaker) | Chỉ là file rỗng. Thư mục `modules/storage` không còn: storage đã chuyển lên `services/` (xem dòng dưới) |
 | Services (http, AI) | Chỉ là file rỗng |
+| Service `storage` (`services/storage`) | Phiên 6: API file trên thẻ SD (mount, open/read/write/seek, list, mkdir, remove, rename, đọc/ghi cả file), nối FatFs vào `sdcard` qua `storage_diskio.c`. **Đã chạy trên máy host** (FatFs thật, thẻ SD giả lập bằng RAM, ASan và UBSan, 0 lỗi) và biên dịch sạch với `-Wall -Wextra -Wshadow -Wconversion -Wsign-conversion -Wpedantic`. **Chưa build đầy đủ bằng `idf.py build`**, chưa thử với thẻ thật, chưa chạy trên phần cứng. Chưa có `board_init()` nên chưa có code gọi `storage_init` |
+| `libs/` (FatFs R0.16 của ChaN, cJSON) | Phiên 6: `libs/CMakeLists.txt` đăng ký component `libs` chỉ build FatFs (`ff.c`, `ffsystem.c`, `ffunicode.c`). cJSON nằm trong thư mục nhưng **chưa build**. Không dùng component `fatfs` của ESP-IDF |
 | App tasks | Chỉ là file rỗng. `app_start()` và `board_init()` **chưa tồn tại**; `app_main()` rỗng |
 | LVGL, Wi-Fi, OTA | Chưa bắt đầu |
 
@@ -107,13 +109,29 @@ Dọn tùy chọn, chờ chủ dự án duyệt (các file rỗng này không n�
 
 Phiên 5 kiểm tra lại sau `git pull`: hai lệnh `git mv` ở trên **vẫn chưa vào git** (repo còn `CmakeLists.txt` và `screem_app.c`), nên build trên Linux lỗi cho tới khi chạy chúng.
 
+Phiên 6 kiểm tra lại: hai lệnh `git mv` (`CmakeLists.txt`, `screem_app.c`) **vẫn chưa vào git**; hai file `sx_sdcard.h` và `esp32s3_sdcard.c` đã được xóa (phần đó xong).
+
+Phiên 6 cần chủ dự án duyệt (đụng quy tắc phụ thuộc trong `Firmware_Construction.md`, mình chưa sửa tài liệu đó):
+
+- `services` giờ `REQUIRES modules utils` và `PRIV_REQUIRES libs` (bảng hiện chỉ cho `services` dùng `utils`). Lý do: `storage.h` include `sdcard.h` của `modules`, và `storage.c` dùng FatFs ở `libs`. Đề xuất sửa bảng ở mục 2 của `Firmware_Construction.md` cho khớp, và thêm `libs` (Layer U, không phụ thuộc layer nào) vào sơ đồ.
+- `libs` được thêm vào `EXTRA_COMPONENT_DIRS` ở `CMakeLists.txt` gốc (trước đó ghi "không liệt kê").
+- `app/CMakeLists.txt`: thêm `user/storage_app/storage_app.c` và include dir `user/storage_app`, vì `app.c` có `#include "storage_app.h"` mà trước đó thư mục này không có trong `INCLUDE_DIRS`.
+- `modules/CMakeLists.txt`: bỏ `storage/storage.c` và include dir `storage` (thư mục này không còn, đây là lỗi cấu hình CMake thật gặp ở phiên trước).
+
+Cần chạy trên máy chủ dự án (Git trên Windows). Phiên 6 đã sửa nội dung `services/CMakeLists.txt` nên chỉ cần đổi tên rồi chép đè file đã present:
+
+```powershell
+git mv -f LoganSDK/services/CmakeLists.txt LoganSDK/services/CMakeLists.txt
+git mv LoganSDK/app/user/screen_app/screem_app.c LoganSDK/app/user/screen_app/screen_app.c
+```
+
 Phiên 5 chuyển thẻ SD khỏi peripheral. Cần chạy trên máy của chủ dự án để xóa hai file cũ:
 
 ```powershell
 git rm LoganSDK/components/peripherals/sdcard/sx_sdcard.h LoganSDK/platform/esp32s3/sdcard/esp32s3_sdcard.c
 ```
 
-Cần chủ dự án quyết định: nối FatFs cho `sdcard`. `ff.h` và `diskio_impl.h` thuộc component `fatfs` của ESP-IDF nên cần thêm `fatfs` vào `REQUIRES` của `modules`; quy tắc hiện tại chỉ cho `modules` dùng `peripherals` và `utils`. Đề xuất đặt phần nối này trong module `storage` (một file riêng), không đụng vào `sdcard`.
+(Đã xử lý ở phiên 6, xem Phiên 6) Cần chủ dự án quyết định: nối FatFs cho `sdcard`. `ff.h` và `diskio_impl.h` thuộc component `fatfs` của ESP-IDF nên cần thêm `fatfs` vào `REQUIRES` của `modules`; quy tắc hiện tại chỉ cho `modules` dùng `peripherals` và `utils`. Đề xuất đặt phần nối này trong module `storage` (một file riêng), không đụng vào `sdcard`.
 
 Danh sách lệnh đổi tên cũ của phiên 1 (đã lỗi thời, 4 file `esp32s3_*.c` đã ở đúng chỗ):
 
@@ -147,7 +165,7 @@ Thứ tự đề xuất (mỗi bước phải build được trước khi sang b
 0b. Khôi phục `board.h`, `board.c` (`board_init()`), `app.c` (`app_start()`), nối từ `app_main()`.
 
 1. (Xong ở phiên 5: build OK) `sx_pwm`, `sx_uart`, callback ngắt của `sx_gpio`. Cần review API trước khi dùng. Module `sdcard` đã viết, xem Phiên 5.
-2. Modules: `screenHMI` (chuỗi khởi tạo ST7796 qua `sx_i80`, reset/backlight), `touch` (FT6336U qua `sx_i2c`), `storage` (nối FatFs lên `sdcard`, sau khi chủ dự án quyết định), `speaker`.
+2. Modules: `screenHMI` (chuỗi khởi tạo ST7796 qua `sx_i80`, reset/backlight), `touch` (FT6336U qua `sx_i2c`), `speaker`. (`storage` đã viết ở phiên 6, nằm ở `services/storage`.)
 3. Bring-up trên phần cứng (chủ dự án chạy `set-target`, build, flash): xác minh Flash/PSRAM, chân, LCD hiển thị, touch đọc được, SD mount, speaker ra tiếng, thử mic.
 
 ### Phiên 4 (2026-11-04)
@@ -253,4 +271,37 @@ Kế hoạch tiếp theo:
 
 - Chủ dự án quyết định có nối FatFs hay không (xem mục 6), rồi viết module `storage` đặt trên `sdcard`.
 - Khôi phục `board.h`, `board_init()`, `app_start()` (bước 0b mục 7), khi đó `board.c` sở hữu `sdcard_t`, `sx_spi_config_t` và chân CS của thẻ.
+- Bring-up thẻ SD thật khi có xác minh chân.
+
+### Phiên 6 (2026-11-05)
+
+Đã làm:
+
+- Clone repo, đọc `HandOver.md`, `RuleAgent.md`, `RuleCode.md`, `Firmware_Construction.md`, `Product_Construction.md`, đối chiếu với repo. Phát hiện lệch: tên file docs (`HandOver.md`... thay vì `handover.md`...), `libs/` đã có cJSON và FatFs (handover ghi trống), `app.c` có `app_init()` (không phải `app_start()`), `modules/CMakeLists.txt` còn trỏ `storage/storage.c` khi thư mục đã chuyển sang `services/`.
+- Hoàn thành service `storage` mà phiên trước viết dở (phiên đó dừng sau khi có `storage.h`, `storage_diskio.h`, `storage_diskio.c`; `storage.c` chưa có). File trong `LoganSDK/services/storage/`:
+  - `storage.h` (sửa nhẹ so với bản dở: thêm `STORAGE_ERR_FULL` khi không ghi được byte nào, ghi chú FatFs không có khóa file, ghi chú `card_config` NULL).
+  - `storage.c` (mới viết): mount/unmount (tự bring-up thẻ khi `card_config` có giá trị, tùy chọn format khi thẻ chưa có FAT), bảng file handle tĩnh (mặc định 4), ánh xạ `FRESULT` sang mã `STORAGE_ERR_*`, đọc/ghi cả file, list/stat/mkdir/remove/rename, `storage_get_space`.
+  - `storage_diskio.h`, `storage_diskio.c`: nối `disk_*` của FatFs xuống `sdcard_*`. Chỉ sửa một dòng ép kiểu (`DSTATUS`) so với bản dở để hết cảnh báo `-Wconversion`.
+- Sửa CMake: `libs/CMakeLists.txt` (mới), `services/CMakeLists.txt` (đổi tên đúng hoa/thường, thêm nguồn storage, `REQUIRES modules utils`, `PRIV_REQUIRES libs`), `modules/CMakeLists.txt` (bỏ storage), `app/CMakeLists.txt` (thêm `storage_app`), `CMakeLists.txt` gốc (thêm `libs`).
+
+Đã kiểm chứng:
+
+- Chạy trên máy host (ASan và UBSan) `storage.c` + `storage_diskio.c` + FatFs R0.16 thật với `sdcard_*` giả lập bằng RAM (8192 khối): không có thẻ, thẻ trống không format (`STORAGE_ERR_NO_FS`, thẻ được trả lại), format rồi mount, đọc/ghi file nhỏ và file 100 KB nhiều cluster, ghi đè và thu nhỏ file, tên file dài và không phân biệt hoa thường, append, seek, kiểm tra đường dẫn sai, giới hạn 4 file mở, thư mục lồng nhau, list (đếm, dừng giữa chừng), stat, xóa thư mục không rỗng, đổi tên (kể cả đích đã tồn tại), unmount rồi mount lại và dữ liệu còn nguyên (không format lại), thẻ do chủ khác khởi tạo thì storage không giải phóng, thẻ đầy trả `STORAGE_ERR_FULL` và ghi lại được sau khi xóa. 0 lỗi.
+- Biên dịch sạch `storage.c`, `storage_diskio.c` với `-Wall -Wextra -Wshadow -Wconversion -Wsign-conversion -Wpedantic` trên host. Bài test nằm ngoài repo (không commit).
+- Dựng ESP-IDF v5.4.3 trong sandbox (theo mục 8) và chạy `idf.py set-target esp32s3` trên bản sao: **cấu hình CMake thành công** với bố cục component mới (có `libs`). Cần áp tạm hai đổi tên ở mục 6 để chạy trên Linux.
+
+Chưa làm hoặc chưa kiểm chứng:
+
+- **Chưa chạy `idf.py build` đầy đủ** (theo yêu cầu của chủ dự án, phiên này bỏ qua). Chưa biết `ff.c`, `ffunicode.c` có cảnh báo hay lỗi với toolchain ESP-IDF không, chưa kiểm tra xung đột với component `fatfs` có sẵn của ESP-IDF (cả hai cùng định nghĩa `f_open`...; component `fatfs` của ESP-IDF không nằm trong `REQUIRES` của ai nên kỳ vọng không bị link, nhưng chưa xác nhận), chưa biết kích thước Flash và RAM thêm vào.
+- Chưa thử với thẻ SD thật, chưa chạy trên phần cứng. Giả lập chỉ chứng minh logic khớp mô hình do chính phiên này viết.
+- `storage` chưa có chủ sở hữu: chưa có `board_init()` tạo `sdcard_t`, `sdcard_config_t`, `storage_config_t` (và cấu hình SPI/chân CS, vẫn chưa xác minh). `storage_app.c` và `app_storage_init()` vẫn rỗng.
+- Không thread-safe (FatFs build với `FF_FS_REENTRANT=0`, một buffer tên dùng chung): phải gọi từ một task duy nhất (storage task). Không có RTC (`FF_FS_NORTC=1`) nên mọi file có cùng dấu thời gian cố định. Ghi cả file không atomic (mất điện giữa chừng có thể để lại file dở). Chỉ truy cập từng khối 512 byte (xem hạn chế của `sdcard`), nên tốc độ chưa tối ưu.
+- `ffconf.h` do chủ dự án cấu hình (code page 437, `FF_USE_MKFS=1`, `FF_USE_STRFUNC=1`, LFN bật); tên file có ký tự ngoài code page 437 sẽ không dùng được.
+- Các điểm lệch tài liệu còn mở: tên file docs, `platform/` so với `platforms/`, `Firmware_Construction.md` chưa phản ánh `storage` ở `services` và `libs`.
+
+Kế hoạch tiếp theo:
+
+- Chạy `idf.py build` đầy đủ (kiểm tra cảnh báo của FatFs, xung đột `fatfs`, kích thước) trước khi nối tiếp.
+- Khôi phục `board.h`, `board_init()`, `app_start()` (bước 0b mục 7): khi đó `board.c` sở hữu `sdcard_t`, `sdcard_config_t` và `storage_config_t`.
+- Viết `storage_app` (task duy nhất gọi `storage_*`), sau khi chủ dự án quyết định mức ưu tiên và stack.
 - Bring-up thẻ SD thật khi có xác minh chân.

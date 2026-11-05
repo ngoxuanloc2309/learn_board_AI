@@ -7,6 +7,7 @@ idf_component_register(SRCS "app.c"
                             "user/ntp_app/ntp_app.c"
                             "user/screen_app/screen_app.c"
                             "user/speaker_app/speaker_app.c"
+                            "user/storage_app/storage_app.c"
                     INCLUDE_DIRS "." "user/AI_app" "user/http_app" "user/ntp_app"
-                                 "user/screen_app" "user/speaker_app"
+                                 "user/screen_app" "user/speaker_app" "user/storage_app"
                     REQUIRES board modules services utils esp32s3)
