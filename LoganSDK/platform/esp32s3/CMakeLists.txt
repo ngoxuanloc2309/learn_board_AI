@@ -4,9 +4,8 @@ idf_component_register(SRCS "gpio/esp32s3_gpio.c"
                             "i2s/esp32s3_i2s.c"
                             "i80/esp32s3_i80.c"
                             "pwm/esp32s3_pwm.c"
-                            "sdcard/esp32s3_sdcard.c"
                             "spi/esp32s3_spi.c"
                             "uart/esp32s3_uart.c"
-                    INCLUDE_DIRS "gpio" "i2c" "i2s" "i80" "pwm" "sdcard" "spi" "uart"
+                    INCLUDE_DIRS "gpio" "i2c" "i2s" "i80" "pwm" "spi" "uart"
                     REQUIRES peripherals
-                    PRIV_REQUIRES driver esp_lcd fatfs sdmmc)
+                    PRIV_REQUIRES driver esp_lcd)

@@ -1,7 +1,7 @@
 # Handover - AI Learning Device
 
 > File này do mọi phiên làm việc (Claude hoặc AI khác) cập nhật ở cuối phiên. Quy tắc: xem `rule_code.md` mục 3.
-> Cập nhật lần cuối: 2026-11-04 (phiên 4).
+> Cập nhật lần cuối: 2026-11-05 (phiên 5).
 
 ## 1. Đọc trước khi làm
 
@@ -27,7 +27,8 @@
 | Phase 1 trên máy của chủ dự án (`set-target`, build, flash) | **Chưa làm** (chủ dự án sẽ làm sau khi dev tương đối xong) |
 | `board.h` (chân, số cổng) | **Chỉ là stub** (enum `BoardType_t`), chưa có chân nào, chưa có nhãn `REF/DESIGN/GIVEN` hay `BOARD_PINMAP_VERIFIED`. Phiên 1 mô tả đầy đủ hơn nhưng nội dung đó không có trong repo |
 | Peripheral `sx_gpio`, `sx_i2c`, `sx_spi`, `sx_i80`, `sx_i2s` | Hợp đồng và hiện thực ESP32-S3 đã viết, **đã compile trong build đầy đủ (phiên 3), chưa chạy trên phần cứng**. Chưa kiểm chứng link vào firmware vì chưa có code nào gọi chúng |
-| PWM, UART, SD card (`sx_sdcard`) | Hợp đồng và hiện thực ESP32-S3 đã viết ở phiên 4; chưa build lại và chưa chạy phần cứng |
+| Peripheral `sx_pwm`, `sx_uart`, ngắt của `sx_gpio` | Viết ở phiên 4. Phiên 5: sửa lỗi compile ở `esp32s3_gpio.c`, **build đầy đủ thành công (0 cảnh báo)**; chưa chạy trên phần cứng |
+| Module `sdcard` (`components/modules/sdcard`) | Phiên 5: block device SD-SPI trên `sx_spi`. **Đã build trên target esp32s3 (0 cảnh báo) và đã chạy thử trên máy host với thẻ SD giả lập** (SDHC, SDSC, MMC, không có thẻ, cấu hình sai); **chưa thử với thẻ thật**. Chưa có hệ thống tệp (FatFs) |
 | Modules (screenHMI, touch, speaker, storage) | Chỉ là file rỗng |
 | Services (http, AI) | Chỉ là file rỗng |
 | App tasks | Chỉ là file rỗng. `app_start()` và `board_init()` **chưa tồn tại**; `app_main()` rỗng |
@@ -104,6 +105,16 @@ Chép đè các `CMakeLists.txt` đã present ở phiên 3 (root, `main`, `app`,
 Dọn tùy chọn, chờ chủ dự án duyệt (các file rỗng này không nằm trong `SRCS`, không ảnh hưởng build):
 `LoganSDK/components/peripherals/{gpio/sx_gpio.c,i2c/sx_i2c.c,i2s/sx_i2s.c,i80/sx_i80.c,spi/sx_spi.c}` và `LoganSDK/platform/CMakeLists.txt` (rỗng, không phải component).
 
+Phiên 5 kiểm tra lại sau `git pull`: hai lệnh `git mv` ở trên **vẫn chưa vào git** (repo còn `CmakeLists.txt` và `screem_app.c`), nên build trên Linux lỗi cho tới khi chạy chúng.
+
+Phiên 5 chuyển thẻ SD khỏi peripheral. Cần chạy trên máy của chủ dự án để xóa hai file cũ:
+
+```powershell
+git rm LoganSDK/components/peripherals/sdcard/sx_sdcard.h LoganSDK/platform/esp32s3/sdcard/esp32s3_sdcard.c
+```
+
+Cần chủ dự án quyết định: nối FatFs cho `sdcard`. `ff.h` và `diskio_impl.h` thuộc component `fatfs` của ESP-IDF nên cần thêm `fatfs` vào `REQUIRES` của `modules`; quy tắc hiện tại chỉ cho `modules` dùng `peripherals` và `utils`. Đề xuất đặt phần nối này trong module `storage` (một file riêng), không đụng vào `sdcard`.
+
 Danh sách lệnh đổi tên cũ của phiên 1 (đã lỗi thời, 4 file `esp32s3_*.c` đã ở đúng chỗ):
 
 ```powershell
@@ -135,8 +146,8 @@ Thứ tự đề xuất (mỗi bước phải build được trước khi sang b
 0. (Xong) Nối CMake và build.
 0b. Khôi phục `board.h`, `board.c` (`board_init()`), `app.c` (`app_start()`), nối từ `app_main()`.
 
-1. (Đã viết hợp đồng và hiện thực, chưa build lại) `sx_pwm`, `sx_sdcard`, `sx_uart`; `sx_gpio` có callback ngắt. Cần build trên môi trường ESP-IDF và review API trước khi dùng.
-2. Modules: `screenHMI` (chuỗi khởi tạo ST7796 qua `sx_i80`, reset/backlight), `touch` (FT6336U qua `sx_i2c`), `storage`, `speaker`.
+1. (Xong ở phiên 5: build OK) `sx_pwm`, `sx_uart`, callback ngắt của `sx_gpio`. Cần review API trước khi dùng. Module `sdcard` đã viết, xem Phiên 5.
+2. Modules: `screenHMI` (chuỗi khởi tạo ST7796 qua `sx_i80`, reset/backlight), `touch` (FT6336U qua `sx_i2c`), `storage` (nối FatFs lên `sdcard`, sau khi chủ dự án quyết định), `speaker`.
 3. Bring-up trên phần cứng (chủ dự án chạy `set-target`, build, flash): xác minh Flash/PSRAM, chân, LCD hiển thị, touch đọc được, SD mount, speaker ra tiếng, thử mic.
 
 ### Phiên 4 (2026-11-04)
@@ -210,3 +221,36 @@ Chưa làm hoặc chưa kiểm chứng:
 Điểm cần lưu ý:
 
 - `peripherals` là component chỉ có header nên không sinh thư viện `.a`; điều này là đúng.
+
+### Phiên 5 (2026-11-05)
+
+Đã làm:
+
+- Pull repo, đối chiếu với handover: phát hiện hai lệnh `git mv` của phiên 3 chưa vào git và `esp32s3_gpio.c` (phiên 4) không compile được, vì code ngắt bị chèn vào trong thân `sx_gpio_write`.
+- Sửa `esp32s3_gpio.c`: tách `interrupt_type`, `sx_gpio_set_interrupt`, `sx_gpio_remove_interrupt` ra khỏi thân `sx_gpio_write`, không đổi logic.
+- Theo yêu cầu của chủ dự án, chuyển thẻ SD từ peripheral lên module: bỏ `sx_sdcard.h` và `esp32s3_sdcard.c`, viết mới `components/modules/sdcard/sdcard.h` và `sdcard.c`.
+  Module chỉ dùng `sx_spi`: nhận dạng thẻ ở xung nhịp chậm (400 kHz, tối đa theo chuẩn), đọc dung lượng từ CSD (v1 và v2),
+  rồi tháo và thêm lại thiết bị SPI ở xung nhịp dữ liệu (tối đa 25 MHz); đọc/ghi từng khối 512 byte (CMD17, CMD24). Hỗ trợ SDSC, SDHC, SDXC; từ chối MMC.
+- Sửa CMake: `peripherals` bỏ thư mục `sdcard`; `platform/esp32s3` bỏ `esp32s3_sdcard.c` và `PRIV_REQUIRES fatfs sdmmc`; `modules` thêm `sdcard/sdcard.c`.
+- Sửa `Firmware_Construction.md` (danh sách module, bảng phụ thuộc, bảng trạng thái peripheral, ghi chú thẻ SD không phải peripheral).
+
+Đã kiểm chứng:
+
+- `idf.py set-target esp32s3` và `idf.py build` trên bản sao (ESP-IDF v5.4.3), sau khi áp tạm hai đổi tên ở mục 6: **build thành công, 0 cảnh báo**; `libmodules.a` có đủ symbol `sdcard_*`.
+- `sdcard.c` biên dịch sạch với `-Wall -Wextra -Wshadow -Wconversion -Wsign-conversion -Wpedantic` trên host.
+- Chạy `sdcard.c` thật trên máy host (ASan và UBSan) với `sx_spi` giả lập và thẻ SD giả lập: khởi tạo SDHC (1024 khối) và SDSC địa chỉ byte (4096 khối), đọc/ghi hai khối rồi đọc lại, từ chối khối ngoài phạm vi, bỏ qua `count == 0`, MMC trả `SDCARD_ERR_UNSUPPORTED`, không có thẻ trả `SDCARD_ERR_NO_CARD`, cấu hình sai trả `SDCARD_ERR_PARAM`, đúng thứ tự xung nhịp 400 kHz rồi 20 MHz.
+  Bài test này nằm ngoài repo (không commit).
+
+Chưa kiểm chứng:
+
+- Chưa thử với thẻ SD thật và chưa chạy trên phần cứng. Giả lập chỉ chứng minh logic khớp mô hình thẻ do chính phiên này viết, không thay thế thử trên thẻ thật (nhiều hãng, thẻ cũ có thể khác).
+- Timeout đếm theo số lần poll vì module không có nguồn thời gian; thời gian thật phụ thuộc tốc độ gọi SPI. Khi không có thẻ, `sdcard_init` có thể chặn tới vài giây.
+- Chỉ ghi/đọc từng khối; chưa dùng CMD18/CMD25 (nhiều khối) nên tốc độ chưa tối ưu.
+- Chân SD, host SPI, nối dây (kéo lên MISO, cấp nguồn thẻ) chưa xác minh trên V15 và chưa có trong `board.h`. Chưa thử thẻ dùng chung bus SPI với thiết bị khác.
+- Chưa có hệ thống tệp; chưa có `board_init()` tạo instance `sdcard_t`.
+
+Kế hoạch tiếp theo:
+
+- Chủ dự án quyết định có nối FatFs hay không (xem mục 6), rồi viết module `storage` đặt trên `sdcard`.
+- Khôi phục `board.h`, `board_init()`, `app_start()` (bước 0b mục 7), khi đó `board.c` sở hữu `sdcard_t`, `sx_spi_config_t` và chân CS của thẻ.
+- Bring-up thẻ SD thật khi có xác minh chân.

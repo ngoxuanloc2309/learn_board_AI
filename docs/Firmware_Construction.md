@@ -16,7 +16,7 @@ LoganSDK/
   board/                      Layer 4: chân, số cổng, wiring (board_init), sở hữu instance driver
   services/                   Layer 3: http, AI backend/frontend. Không biết phần cứng.
   components/
-    modules/                  Layer 2: thiết bị logic: screenHMI, touch, speaker, storage
+    modules/                  Layer 2: thiết bị logic: screenHMI, touch, speaker, storage, sdcard
     peripherals/              Layer 1: hợp đồng sx_gpio, sx_i2c, sx_spi, sx_i80 (CHỈ header)
   platforms/
     esp32s3/                  Layer 0: hiện thực hợp đồng bằng ESP-IDF (esp32s3_gpio.c, ...)
@@ -37,7 +37,7 @@ Chỉ phụ thuộc xuống dưới. Tầng dưới không include tầng trên.
 | `app` | `board`, `modules`, `services`, `utils`, `esp32s3` | Layer thấy tất cả; `esp32s3` (thư mục `platforms/esp32s3`) có mặt để hiện thực chip được link. Tên component ESP-IDF là tên thư mục, nên đổi chip thì đổi tên này |
 | `board` | `peripherals`, `modules` | Không include `esp32s3`; chỉ dùng hợp đồng |
 | `services` | `utils` | Thêm `esp_http_client`, `esp-tls`... khi code thật sự dùng |
-| `modules` | `peripherals`, `utils` | Nhận cấu hình qua tham số, không include `board.h` |
+| `modules` | `peripherals`, `utils` | Nhận cấu hình qua tham số, không include `board.h`. `sdcard` chỉ dùng `sx_spi` |
 | `esp32s3` (`platforms/esp32s3`) | `peripherals`; PRIV: `driver`, `esp_lcd` | **Layer duy nhất được include header driver ESP-IDF** |
 | `peripherals` | (không) | Chỉ header, không phụ thuộc ESP-IDF |
 | `utils` | (không) | |
@@ -115,11 +115,15 @@ Phase 1 hiện ở trạng thái: khung đã nối build; **chưa chạy `set-ta
 | `sx_i80` | Có | Chỉ mức bus và panel IO; chuỗi khởi tạo ST7796 thuộc module `screenHMI` |
 | `sx_i2s` | Có | Speaker I2S TX; chân vẫn chưa xác minh |
 | `sx_pwm` | Có | LEDC đèn nền; timer, channel và chân do board cung cấp |
-| `sx_sdcard` | Có | Mount FATFS qua SPI; chân và host do board cung cấp |
 | `sx_uart` | Có | UART thường hoặc RS485 half-duplex; chân RS485 vẫn chưa xác minh |
 
-Các hợp đồng trên đã được nối vào component CMake. Chưa build lại sau khi bổ sung các driver mới vì môi trường hiện tại không có `idf.py` hoặc `IDF_PATH`.
+Các hợp đồng trên đã được nối vào component CMake và đã build thành công trong sandbox (phiên 5, ESP-IDF v5.4.3, target esp32s3).
 **Chưa chạy trên phần cứng.**
+
+**Thẻ SD không phải peripheral.** Thẻ là thiết bị nằm trên bus SPI nên thuộc Layer 2: module `sdcard` (`components/modules/sdcard`)
+nói giao thức SD-SPI qua `sx_spi` và phơi API khối 512 byte (`sdcard_init`, `sdcard_read_blocks`, `sdcard_write_blocks`).
+Module không include ESP-IDF và không biết hệ thống tệp. Nối FatFs (mount, `f_open`...) chưa làm vì cần thêm dependency `fatfs`
+vào layer `modules`; chờ chủ dự án quyết định (xem `HandOver.md` mục 6).
 
 `sx_gpio` có thêm đăng ký và gỡ callback ngắt ISR. Callback phải ngắn, không block và chỉ gọi API ISR-safe.
 
