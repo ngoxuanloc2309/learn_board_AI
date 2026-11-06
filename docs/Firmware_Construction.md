@@ -17,7 +17,7 @@ LoganSDK/
   services/                   Layer 3: http, AI backend/frontend, storage (file trên thẻ SD). Không biết phần cứng.
   components/
     modules/                  Layer 2: thiết bị logic: screenHMI, touch, speaker, storage, sdcard
-    peripherals/              Layer 1: hợp đồng sx_gpio, sx_i2c, sx_spi, sx_i80 (CHỈ header)
+    peripherals/              Layer 1: hợp đồng sx_gpio, sx_i2c, sx_spi, sx_i80, sx_time... (CHỈ header)
   platforms/
     esp32s3/                  Layer 0: hiện thực hợp đồng bằng ESP-IDF (esp32s3_gpio.c, ...)
   utils/                      Layer U: cqueue, sx_filter, ... (không phụ thuộc layer nào)
@@ -116,6 +116,7 @@ Phase 1 hiện ở trạng thái: khung đã nối build; **chưa chạy `set-ta
 | `sx_i2s` | Có | Speaker I2S TX; chân vẫn chưa xác minh |
 | `sx_pwm` | Có | LEDC đèn nền; timer, channel và chân do board cung cấp |
 | `sx_uart` | Có | UART thường hoặc RS485 half-duplex; chân RS485 vẫn chưa xác minh |
+| `sx_time` | Có | `sx_delay_ms` (chờ ít nhất ms mili giây; chờ ngắn thì busy wait chính xác, chờ dài thì nhường CPU) và `sx_get_time_ms` (đếm ms từ lúc khởi động, quay vòng sau khoảng 49,7 ngày). Không gọi trong ngắt |
 
 Các hợp đồng trên đã được nối vào component CMake và đã build thành công trong sandbox (phiên 5, ESP-IDF v5.4.3, target esp32s3).
 **Chưa chạy trên phần cứng.**

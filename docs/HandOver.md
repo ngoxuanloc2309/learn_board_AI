@@ -332,13 +332,36 @@ Chưa làm hoặc chưa kiểm chứng:
 
 - Chưa `idf.py build` với hai module mới trong dự án, chưa chạy trên phần cứng. Màn hình và touch chưa từng được thử với board thật.
 - Chưa có `board.h`, `board_init()` nên chưa ai tạo cấu hình cho hai module (chân, tốc độ pixel clock, bảng lệnh panel, MADCTL, hướng touch). Mọi giá trị trên chưa xác minh (xem mục 4).
-- Module không có nguồn thời gian riêng, nên cần callback `delay_ms` do board cung cấp. Board layer không được phụ thuộc ESP-IDF, nên cần quyết định nguồn của callback này, đề xuất thêm hợp đồng `sx_delay` ở `peripherals` (hiện thực bằng FreeRTOS delay ở `platform/esp32s3`). Chưa làm, chờ chủ dự án duyệt.
+- Module không có nguồn thời gian riêng, nên cần callback `delay_ms` do board cung cấp. Đã giải quyết: chủ dự án thêm hợp đồng `sx_time` (`sx_delay_ms`), board truyền thẳng `sx_delay_ms` làm callback (cùng chữ ký `void (*)(uint32_t)`). Xem mục sx_time bên dưới.
 - `screen_hmi_fill_rect` dùng buffer tĩnh nội bộ làm nguồn DMA, chưa kiểm tra yêu cầu căn lề hay vùng nhớ của driver `esp_lcd` trên ESP32-S3 (buffer này nằm trong RAM trong). `screen_hmi_draw_bitmap` yêu cầu buffer do người gọi cấp phát phù hợp DMA.
 - Touch dùng polling, nên chưa tận dụng chân INT. Cần xác minh cực tính và chế độ của INT khi bring-up nếu muốn tiết kiệm I2C.
 - Chưa có tích hợp LVGL (flush callback, đọc input) và chưa chia sẻ khóa giữa `screen_hmi` và `touch`.
 
 Kế hoạch tiếp theo:
 
-- Quyết định nguồn `delay_ms` (đề xuất `sx_delay`), rồi khôi phục `board.h`, `board_init()`, `app_start()` và cấu hình cho `screenHMI`, `touch`, `sdcard`, `storage`.
+- Khôi phục `board.h`, `board_init()`, `app_start()` và cấu hình cho `screenHMI`, `touch`, `sdcard`, `storage` (truyền `sx_delay_ms` làm `delay_ms`).
 - Viết `speaker`.
 - Bring-up: hiển thị màu bằng `screen_hmi_fill_rect`, đọc `touch_read_id` và `touch_read`, chỉnh MADCTL, đảo màu, bảng lệnh panel và hướng touch theo màn hình thật.
+
+Phiên 6 (tiếp, cùng ngày): hoàn thành `sx_time`.
+
+Đã làm (chủ dự án đã push `sx_time.h` với hai chữ ký `sx_delay_ms`, `sx_get_time_ms`; file hiện thực còn rỗng và tên nhầm chip):
+
+- `LoganSDK/components/peripherals/time/sx_time.h`: giữ nguyên hai chữ ký. Sửa include guard (đang là `SX_SPI_H`, trùng với `sx_spi.h`, include cả hai header sẽ làm một header bị bỏ qua mà không báo lỗi) thành `SX_TIME_H`. Thêm mô tả hợp đồng: không gọi trong ngắt, chờ ít nhất ms mili giây và dài hơn dưới hai tick, bộ đếm quay vòng sau khoảng 49,7 ngày (đo khoảng bằng phép trừ số không dấu), con trỏ NULL thì không làm gì.
+- `LoganSDK/platform/esp32s3/time/esp32s3_time.c`: đổi tên từ `esp32c3_time.c` (`git mv`, nhầm chip) và viết nội dung. `sx_delay_ms`: chờ ngắn hơn hai tick (20 ms ở FreeRTOS 100 Hz của dự án), hoặc khi scheduler chưa chạy, dùng busy wait `esp_rom_delay_us` (chính xác, chia bước tối đa 1 giây); chờ dài dùng `vTaskDelay(ms / tick + 2)` để không bao giờ ngắn hơn ms. `sx_get_time_ms`: `esp_timer_get_time()` chia 1000, giữ 32 bit thấp.
+- `LoganSDK/components/peripherals/CMakeLists.txt`: thêm `time` vào `INCLUDE_DIRS`.
+- `LoganSDK/platform/esp32s3/CMakeLists.txt`: thêm `time/esp32s3_time.c` vào nguồn, thêm `esp_timer esp_rom freertos` vào `PRIV_REQUIRES`.
+- `docs/Firmware_Construction.md`: thêm dòng `sx_time` vào bảng trạng thái peripheral (mục 8) và vào sơ đồ layer.
+
+Đã kiểm chứng:
+
+- Chạy trên máy host (ASan và UBSan) với bản giả lập FreeRTOS, `esp_timer`, `esp_rom_delay_us`, ở tick 100 Hz và 1000 Hz: các nhánh chờ ngắn, chờ dài, chưa có scheduler, chia bước, đảm bảo "không ngắn hơn ms và dài hơn dưới hai tick" cho mọi ms từ 0 đến 20000, bộ đếm quay vòng và đo khoảng qua điểm quay vòng, con trỏ NULL. 0 lỗi, đột biến cố ý (bỏ phần cộng 2) bị bắt. Test này bắt được một lỗi thật: thiếu `#include <stddef.h>` cho `NULL`, đã sửa.
+- `idf.py build` đầy đủ trong sandbox (ESP-IDF v5.4.3, GCC 14.2.0, target esp32s3) trên bản sao của repo (commit `01e23fd` cộng thay đổi của phiên này): **build thành công**, không có cảnh báo biên dịch từ code dự án. Đây là lần build đầu tiên có cả `screenHMI`, `touch`, `storage` và `sx_time`. `esp32s3_time.c.obj` có được biên dịch.
+
+Chưa làm hoặc chưa kiểm chứng:
+
+- Chưa chạy trên phần cứng, chưa đo độ chính xác thật của `sx_delay_ms` và `sx_get_time_ms`.
+- Chưa có ai gọi `sx_time`, nên linker có thể loại bỏ nó khỏi bin; kích thước bin chưa phản ánh chi phí thật.
+- Busy wait giữ CPU: `screen_hmi_fill_rect` chờ theo bước 1 ms bằng busy wait. Chấp nhận được cho bring-up, không dành cho đường chạy chính.
+- `sdcard` vẫn đếm timeout theo số lần poll (không dùng `sx_time`); có thể đổi sang thời gian thật sau, chưa làm.
+- `sdkconfig` đang được commit vào git (`.gitignore` chỉ có `build/`). Cần chủ dự án quyết định có giữ không.
