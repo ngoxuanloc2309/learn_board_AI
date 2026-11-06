@@ -29,7 +29,9 @@
 | Peripheral `sx_gpio`, `sx_i2c`, `sx_spi`, `sx_i80`, `sx_i2s` | Hợp đồng và hiện thực ESP32-S3 đã viết, **đã compile trong build đầy đủ (phiên 3), chưa chạy trên phần cứng**. Chưa kiểm chứng link vào firmware vì chưa có code nào gọi chúng |
 | Peripheral `sx_pwm`, `sx_uart`, ngắt của `sx_gpio` | Viết ở phiên 4. Phiên 5: sửa lỗi compile ở `esp32s3_gpio.c`, **build đầy đủ thành công (0 cảnh báo)**; chưa chạy trên phần cứng |
 | Module `sdcard` (`components/modules/sdcard`) | Phiên 5: block device SD-SPI trên `sx_spi`. **Đã build trên target esp32s3 (0 cảnh báo) và đã chạy thử trên máy host với thẻ SD giả lập** (SDHC, SDSC, MMC, không có thẻ, cấu hình sai); **chưa thử với thẻ thật**. Chưa có hệ thống tệp (FatFs) |
-| Modules (screenHMI, touch, speaker) | Chỉ là file rỗng. Thư mục `modules/storage` không còn: storage đã chuyển lên `services/` (xem dòng dưới) |
+| Modules (speaker) | Chỉ là file rỗng. Thư mục `modules/storage` không còn: storage đã chuyển lên `services/` (xem dòng dưới) |
+| Module `screenHMI` (`modules/screenHMI`) | Phiên 6: ST7796 qua `sx_i80`, reset qua `sx_gpio`, backlight PWM qua `sx_pwm`. Chỉ gửi lệnh MIPI DCS chuẩn; bảng lệnh riêng của panel do board truyền vào. **Đã chạy trên máy host** (hợp đồng `sx_*` giả lập) và biên dịch sạch bằng GCC 14.2 cho ESP32-S3. **Chưa build trong dự án, chưa chạy trên phần cứng** |
+| Module `touch` (`modules/touch`) | Phiên 6: FT6x36/FT5x06 (FT6336U) qua `sx_i2c`, chỉ đọc thanh ghi, dùng polling (không dùng chân INT). Kiểm chứng giống `screenHMI`. **Chưa build trong dự án, chưa chạy trên phần cứng** |
 | Services (http, AI) | Chỉ là file rỗng |
 | Service `storage` (`services/storage`) | Phiên 6: API file trên thẻ SD (mount, open/read/write/seek, list, mkdir, remove, rename, đọc/ghi cả file), nối FatFs vào `sdcard` qua `storage_diskio.c`. **Đã chạy trên máy host** (FatFs thật, thẻ SD giả lập bằng RAM, ASan và UBSan, 0 lỗi) và biên dịch sạch với `-Wall -Wextra -Wshadow -Wconversion -Wsign-conversion -Wpedantic`. Chủ dự án đã chạy `idf.py build` thành công cho esp32s3 (phiên 6). Chưa thử với thẻ thật, chưa chạy trên phần cứng. Lưu ý: `app_init()` chưa được ai gọi nên linker có thể bỏ code storage, kích thước bin chưa phản ánh chi phí thật của FatFs Chưa có `board_init()` nên chưa có code gọi `storage_init` |
 | `libs/` (FatFs R0.16 của ChaN, cJSON) | Phiên 6: `libs/CMakeLists.txt` đăng ký component `libs` chỉ build FatFs (`ff.c`, `ffsystem.c`, `ffunicode.c`). cJSON nằm trong thư mục nhưng **chưa build**. Không dùng component `fatfs` của ESP-IDF |
@@ -59,6 +61,10 @@ touch FT6336U/FT5x06 I2C, microSD SPI, speaker I2S có amp onboard, RS485 onboar
 - Trình tự reset chung LCD/touch (GPIO4).
 - Chân strapping bị LCD dùng: GPIO 0, 3, 45, 46.
 - Địa chỉ I2C của touch, hướng màn hình, tốc độ pixel clock tối đa của ST7796 trên board này.
+- Các thời gian chờ trong `screenHMI` và `touch` (reset thấp 10 ms, chờ sau reset 120 ms, chờ sau SWRESET và SLPOUT 120 ms, chờ boot touch 300 ms): lấy theo thông lệ, chưa đối chiếu datasheet.
+- Bảng lệnh riêng của panel (nguồn, gamma, mở khóa lệnh mở rộng): chưa viết, cần nguồn đã xác minh cho đúng panel của board. Không có bảng này màn hình chạy với thiết lập mặc định của chip.
+- Giá trị MADCTL cho từng hướng, có đảo màu (INVON) hay không, thứ tự RGB/BGR: chưa xác minh trên board.
+- Bản đồ thanh ghi và ý nghĩa cờ sự kiện của touch (TD_STATUS 0x02, điểm đầu từ 0x03, ID 0xA3/0xA6/0xA8): theo bản đồ FocalTech thông dụng, chưa đối chiếu datasheet của chip trên board. Cực tính và chế độ chân INT chưa xác minh nên chưa dùng.
 
 Cách xác minh: schematic đúng revision V15, hoặc đo thực tế, hoặc `idf.py flash monitor` để xem thông số Flash/PSRAM khi boot.
 
@@ -165,7 +171,7 @@ Thứ tự đề xuất (mỗi bước phải build được trước khi sang b
 0b. Khôi phục `board.h`, `board.c` (`board_init()`), `app.c` (`app_start()`), nối từ `app_main()`.
 
 1. (Xong ở phiên 5: build OK) `sx_pwm`, `sx_uart`, callback ngắt của `sx_gpio`. Cần review API trước khi dùng. Module `sdcard` đã viết, xem Phiên 5.
-2. Modules: `screenHMI` (chuỗi khởi tạo ST7796 qua `sx_i80`, reset/backlight), `touch` (FT6336U qua `sx_i2c`), `speaker`. (`storage` đã viết ở phiên 6, nằm ở `services/storage`.)
+2. Modules: `speaker`. (`screenHMI` và `touch` đã viết ở phiên 6, xem nhật ký.) (`storage` đã viết ở phiên 6, nằm ở `services/storage`.)
 3. Bring-up trên phần cứng (chủ dự án chạy `set-target`, build, flash): xác minh Flash/PSRAM, chân, LCD hiển thị, touch đọc được, SD mount, speaker ra tiếng, thử mic.
 
 ### Phiên 4 (2026-11-04)
@@ -306,3 +312,33 @@ Kế hoạch tiếp theo:
 - Khôi phục `board.h`, `board_init()`, `app_start()` (bước 0b mục 7): khi đó `board.c` sở hữu `sdcard_t`, `sdcard_config_t` và `storage_config_t`.
 - Viết `storage_app` (task duy nhất gọi `storage_*`), sau khi chủ dự án quyết định mức ưu tiên và stack.
 - Bring-up thẻ SD thật khi có xác minh chân.
+
+Phiên 6 (tiếp, cùng ngày): module `screenHMI` và `touch`.
+
+Đã làm:
+
+- `LoganSDK/components/modules/screenHMI/screenHMI.h` và `screenHMI.c` (file mới, trước đó rỗng). API: `screen_hmi_init`, `screen_hmi_deinit`, `screen_hmi_set_display_on`, `screen_hmi_set_backlight` (0 đến 100 phần trăm, hỗ trợ backlight tích cực thấp), `screen_hmi_draw_bitmap` (bất đồng bộ, vùng chữ nhật tọa độ cuối bao gồm, báo hoàn thành qua callback có thể chạy trong ngắt), `screen_hmi_fill_rect` (chặn, dùng để bring-up, buffer tĩnh 1920 pixel). Chuỗi khởi tạo: reset cứng (nếu có), SWRESET, SLPOUT, bảng lệnh của board, COLMOD RGB565, MADCTL, INVON hoặc INVOFF, DISPON. Module giữ bản sao cấu hình bus I80 và thay `on_color_done`, nên `screen_hmi_t` không được di chuyển khi đang dùng.
+- `LoganSDK/components/modules/touch/touch.h` và `touch.c` (file mới, trước đó rỗng). API: `touch_init` (tạo bus I2C, reset nếu có, chờ boot, kiểm tra địa chỉ), `touch_deinit`, `touch_read` (tối đa 2 điểm, đổi trục, lật, cắt biên), `touch_read_id`, `touch_recover`. Chỉ đọc thanh ghi, không ghi vào chip.
+- Không đưa số GPIO hay thông số board vào module: mọi thứ qua cấu hình của board layer (module không include `board.h`).
+- Không sửa CMake: `modules/CMakeLists.txt` đã có sẵn hai nguồn này và `REQUIRES peripherals utils`.
+
+Đã kiểm chứng:
+
+- Chạy trên máy host (ASan và UBSan) với bản giả lập `sx_i80`, `sx_gpio`, `sx_pwm`, `sx_i2c`: thứ tự và dữ liệu lệnh của chuỗi khởi tạo, thời gian chờ, cửa sổ CASET và RASET (kể cả tọa độ trên 255), kiểm tra tham số, callback hoàn thành được chuyển tiếp và không bị chuyển tiếp trong lúc `fill_rect`, `fill_rect` chia khối đúng, timeout, dọn tài nguyên khi khởi tạo lỗi giữa chừng, backlight tích cực cao và thấp, phân tích khung touch (tọa độ 12 bit, ID, sự kiện lift up và none, khung không hợp lệ, giới hạn bộ đệm), các phép biến đổi tọa độ, reset và địa chỉ tùy chọn, lỗi bus. 0 lỗi. Thử đột biến 5 lỗi cố ý, test bắt được cả 5.
+- Biên dịch sạch với GCC 14.2 cho ESP32-S3 (`-Wall -Wextra -Wshadow -Wconversion -Wsign-conversion -Wpedantic`). Code: `screenHMI` 1272 byte, `touch` 659 byte, không có dữ liệu tĩnh trong module (`screen_hmi_t` chứa buffer fill khoảng 3,8 KiB, do board cấp phát).
+- Bài test và bản giả lập nằm ngoài repo (không commit). Giả lập chỉ chứng minh logic khớp mô hình do chính phiên này viết.
+
+Chưa làm hoặc chưa kiểm chứng:
+
+- Chưa `idf.py build` với hai module mới trong dự án, chưa chạy trên phần cứng. Màn hình và touch chưa từng được thử với board thật.
+- Chưa có `board.h`, `board_init()` nên chưa ai tạo cấu hình cho hai module (chân, tốc độ pixel clock, bảng lệnh panel, MADCTL, hướng touch). Mọi giá trị trên chưa xác minh (xem mục 4).
+- Module không có nguồn thời gian riêng, nên cần callback `delay_ms` do board cung cấp. Board layer không được phụ thuộc ESP-IDF, nên cần quyết định nguồn của callback này, đề xuất thêm hợp đồng `sx_delay` ở `peripherals` (hiện thực bằng FreeRTOS delay ở `platform/esp32s3`). Chưa làm, chờ chủ dự án duyệt.
+- `screen_hmi_fill_rect` dùng buffer tĩnh nội bộ làm nguồn DMA, chưa kiểm tra yêu cầu căn lề hay vùng nhớ của driver `esp_lcd` trên ESP32-S3 (buffer này nằm trong RAM trong). `screen_hmi_draw_bitmap` yêu cầu buffer do người gọi cấp phát phù hợp DMA.
+- Touch dùng polling, nên chưa tận dụng chân INT. Cần xác minh cực tính và chế độ của INT khi bring-up nếu muốn tiết kiệm I2C.
+- Chưa có tích hợp LVGL (flush callback, đọc input) và chưa chia sẻ khóa giữa `screen_hmi` và `touch`.
+
+Kế hoạch tiếp theo:
+
+- Quyết định nguồn `delay_ms` (đề xuất `sx_delay`), rồi khôi phục `board.h`, `board_init()`, `app_start()` và cấu hình cho `screenHMI`, `touch`, `sdcard`, `storage`.
+- Viết `speaker`.
+- Bring-up: hiển thị màu bằng `screen_hmi_fill_rect`, đọc `touch_read_id` và `touch_read`, chỉnh MADCTL, đảo màu, bảng lệnh panel và hướng touch theo màn hình thật.
