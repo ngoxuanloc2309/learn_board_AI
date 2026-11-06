@@ -111,9 +111,9 @@ Phiên 5 kiểm tra lại sau `git pull`: hai lệnh `git mv` ở trên **vẫn 
 
 Phiên 6 kiểm tra lại: hai lệnh `git mv` (`CmakeLists.txt`, `screem_app.c`) **vẫn chưa vào git**; hai file `sx_sdcard.h` và `esp32s3_sdcard.c` đã được xóa (phần đó xong).
 
-Phiên 6 cần chủ dự án duyệt (đụng quy tắc phụ thuộc trong `Firmware_Construction.md`, mình chưa sửa tài liệu đó):
+Phiên 6, chủ dự án đã xác nhận thứ tự layer là app > services > modules > peripherals > platform (chỉ gọi xuống dưới), và `utils` là logic thuần nên mọi layer dùng được. `Firmware_Construction.md` (mục 1, 2, 7) đã được sửa cho khớp. Các thay đổi sau đã được chấp nhận:
 
-- `services` giờ `REQUIRES modules utils` và `PRIV_REQUIRES libs` (bảng hiện chỉ cho `services` dùng `utils`). Lý do: `storage.h` include `sdcard.h` của `modules`, và `storage.c` dùng FatFs ở `libs`. Đề xuất sửa bảng ở mục 2 của `Firmware_Construction.md` cho khớp, và thêm `libs` (Layer U, không phụ thuộc layer nào) vào sơ đồ.
+- `services` giờ `REQUIRES modules utils` và `PRIV_REQUIRES libs`. Lý do: `storage.h` include `sdcard.h` của `modules`, và `storage.c` dùng FatFs ở `libs`.
 - `libs` được thêm vào `EXTRA_COMPONENT_DIRS` ở `CMakeLists.txt` gốc (trước đó ghi "không liệt kê").
 - `app/CMakeLists.txt`: thêm `user/storage_app/storage_app.c` và include dir `user/storage_app`, vì `app.c` có `#include "storage_app.h"` mà trước đó thư mục này không có trong `INCLUDE_DIRS`.
 - `modules/CMakeLists.txt`: bỏ `storage/storage.c` và include dir `storage` (thư mục này không còn, đây là lỗi cấu hình CMake thật gặp ở phiên trước).
@@ -297,7 +297,7 @@ Chưa làm hoặc chưa kiểm chứng:
 - `storage` chưa có chủ sở hữu: chưa có `board_init()` tạo `sdcard_t`, `sdcard_config_t`, `storage_config_t` (và cấu hình SPI/chân CS, vẫn chưa xác minh). `storage_app.c` và `app_storage_init()` vẫn rỗng.
 - Không thread-safe (FatFs build với `FF_FS_REENTRANT=0`, một buffer tên dùng chung): phải gọi từ một task duy nhất (storage task). Không có RTC (`FF_FS_NORTC=1`) nên mọi file có cùng dấu thời gian cố định. Ghi cả file không atomic (mất điện giữa chừng có thể để lại file dở). Chỉ truy cập từng khối 512 byte (xem hạn chế của `sdcard`), nên tốc độ chưa tối ưu.
 - `ffconf.h` do chủ dự án cấu hình (code page 437, `FF_USE_MKFS=1`, `FF_USE_STRFUNC=1`, LFN bật); tên file có ký tự ngoài code page 437 sẽ không dùng được.
-- Các điểm lệch tài liệu còn mở: tên file docs, `platform/` so với `platforms/`, `Firmware_Construction.md` chưa phản ánh `storage` ở `services` và `libs`.
+- Các điểm lệch tài liệu còn mở: tên file docs (`HandOver.md`... so với `handover.md`...) và `platform/` so với `platforms/`.
 
 Kế hoạch tiếp theo:
 

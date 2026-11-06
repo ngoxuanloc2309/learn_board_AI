@@ -14,14 +14,14 @@ LoganSDK/
   app/                        Layer 4: task chương trình và khởi động
     user/<x>_app/               mỗi chương trình một thư mục (screen, speaker, AI, http, ntp)
   board/                      Layer 4: chân, số cổng, wiring (board_init), sở hữu instance driver
-  services/                   Layer 3: http, AI backend/frontend. Không biết phần cứng.
+  services/                   Layer 3: http, AI backend/frontend, storage (file trên thẻ SD). Không biết phần cứng.
   components/
     modules/                  Layer 2: thiết bị logic: screenHMI, touch, speaker, storage, sdcard
     peripherals/              Layer 1: hợp đồng sx_gpio, sx_i2c, sx_spi, sx_i80 (CHỈ header)
   platforms/
     esp32s3/                  Layer 0: hiện thực hợp đồng bằng ESP-IDF (esp32s3_gpio.c, ...)
   utils/                      Layer U: cqueue, sx_filter, ... (không phụ thuộc layer nào)
-  libs/                       (chưa dùng; xác định mục đích trước khi thêm nội dung)
+  libs/                       Mã nguồn bên thứ ba: FatFs (ChaN R0.16, đang build), cJSON (chưa build)
 ```
 
 Mỗi thư mục có `CMakeLists.txt` riêng và là **một component ESP-IDF**. Root `CMakeLists.txt`
@@ -36,7 +36,7 @@ Chỉ phụ thuộc xuống dưới. Tầng dưới không include tầng trên.
 | `main` | `app` | |
 | `app` | `board`, `modules`, `services`, `utils`, `esp32s3` | Layer thấy tất cả; `esp32s3` (thư mục `platforms/esp32s3`) có mặt để hiện thực chip được link. Tên component ESP-IDF là tên thư mục, nên đổi chip thì đổi tên này |
 | `board` | `peripherals`, `modules` | Không include `esp32s3`; chỉ dùng hợp đồng |
-| `services` | `utils` | Thêm `esp_http_client`, `esp-tls`... khi code thật sự dùng |
+| `services` | `modules`, `utils`, `libs` | Gọi xuống `modules` (ví dụ `storage` dùng `sdcard`), không biết `peripherals` hay chip. `libs` chỉ dùng nội bộ (`PRIV_REQUIRES`). Thêm `esp_http_client`, `esp-tls`... khi code thật sự dùng |
 | `modules` | `peripherals`, `utils` | Nhận cấu hình qua tham số, không include `board.h`. `sdcard` chỉ dùng `sx_spi` |
 | `esp32s3` (`platforms/esp32s3`) | `peripherals`; PRIV: `driver`, `esp_lcd` | **Layer duy nhất được include header driver ESP-IDF** |
 | `peripherals` | (không) | Chỉ header, không phụ thuộc ESP-IDF |
@@ -129,7 +129,7 @@ vào layer `modules`; chờ chủ dự án quyết định (xem `HandOver.md` m�
 
 ## 9. Việc còn mở
 
-- Mục đích của `libs/` (hiện không có nội dung).
+- Có build cJSON trong `libs/` hay không, và dùng ở layer nào (hiện chỉ build FatFs).
 - Bảng chọn platform/board bằng CMake (như `splc_select.cmake` của simple_plc): chỉ làm khi có chip hoặc board thứ hai.
 - `utils/cqueue` cần chỉnh nhỏ (chưa sửa, chờ chủ dự án duyệt):
   - `cqueue.h` dùng `#if QUEUE_DEBUG_ENABLE` nhưng macro định nghĩa là `CQUEUE_DEBUG_ENABLE` (đang chạy đúng do macro chưa định nghĩa = 0).
