@@ -1,12 +1,12 @@
 # Handover - AI Learning Device
 
-> File này do mọi phiên làm việc (Claude hoặc AI khác) cập nhật ở cuối phiên. Quy tắc: xem `rule_code.md` mục 3.
-> Cập nhật lần cuối: 2026-11-05 (phiên 6).
+> File này do mọi phiên làm việc (Claude hoặc AI khác) cập nhật ở cuối phiên. Quy tắc: xem `RuleCode.md` mục 3.
+> Cập nhật lần cuối: 2026-11-06 (phiên 7).
 
 ## 1. Đọc trước khi làm
 
 1. `docs/RuleAgent.md` - cách làm việc của AI/agent: quy trình đầu/cuối phiên, nguyên tắc bắt buộc.
-2. `docs/rule_code.md` - quy tắc bàn giao file và viết comment.
+2. `docs/RuleCode.md` - quy tắc bàn giao file và viết comment.
 3. `docs/Firmware_Construction.md` - kiến trúc layer, quy tắc phụ thuộc, trạng thái phần cứng.
 4. `docs/Product_Construction.md` - đặc tả sản phẩm.
 5. Repo tham khảo phong cách của chủ dự án: https://github.com/ngoxuanloc2309/simple_plc.git (mô hình layer, hợp đồng `sx_*`).
@@ -24,14 +24,15 @@
 | Hạng mục | Trạng thái |
 |---|---|
 | Khung project ESP-IDF, CMake nối các layer | Xong ở phiên 3: **đã build thành công** trong sandbox (ESP-IDF v5.4.3, target esp32s3, 0 cảnh báo). Phiên 1 ghi đã build nhưng repo thật lúc đó chưa có các file CMake này |
-| Phase 1 trên máy của chủ dự án (`set-target`, build, flash) | **Chưa làm** (chủ dự án sẽ làm sau khi dev tương đối xong) |
+| Phase 1 trên máy của chủ dự án | Phiên 6: chủ dự án đã `set-target` và `idf.py build` thành công (trước khi có `sx_time`). **Chưa flash.** Chưa build lại trên máy chủ dự án sau commit `aa0d00c` (phiên 7) |
 | `board.h` (chân, số cổng) | **Chỉ là stub** (enum `BoardType_t`), chưa có chân nào, chưa có nhãn `REF/DESIGN/GIVEN` hay `BOARD_PINMAP_VERIFIED`. Phiên 1 mô tả đầy đủ hơn nhưng nội dung đó không có trong repo |
 | Peripheral `sx_gpio`, `sx_i2c`, `sx_spi`, `sx_i80`, `sx_i2s` | Hợp đồng và hiện thực ESP32-S3 đã viết, **đã compile trong build đầy đủ (phiên 3), chưa chạy trên phần cứng**. Chưa kiểm chứng link vào firmware vì chưa có code nào gọi chúng |
 | Peripheral `sx_pwm`, `sx_uart`, ngắt của `sx_gpio` | Viết ở phiên 4. Phiên 5: sửa lỗi compile ở `esp32s3_gpio.c`, **build đầy đủ thành công (0 cảnh báo)**; chưa chạy trên phần cứng |
+| Peripheral `sx_time` | Phiên 6: `sx_delay_ms`, `sx_get_time_ms` (`sx_time.h` và `platform/esp32s3/time/esp32s3_time.c`). Đã chạy trên máy host (giả lập FreeRTOS, `esp_timer`) và đã build đầy đủ trong sandbox. Phiên 7: chủ dự án đã đổi tên `esp32c3_time.c` thành `esp32s3_time.c` và push (commit `aa0d00c`), khớp với `platform/esp32s3/CMakeLists.txt`. Chưa chạy trên phần cứng, chưa có ai gọi |
 | Module `sdcard` (`components/modules/sdcard`) | Phiên 5: block device SD-SPI trên `sx_spi`. **Đã build trên target esp32s3 (0 cảnh báo) và đã chạy thử trên máy host với thẻ SD giả lập** (SDHC, SDSC, MMC, không có thẻ, cấu hình sai); **chưa thử với thẻ thật**. Chưa có hệ thống tệp (FatFs) |
 | Modules (speaker) | Chỉ là file rỗng. Thư mục `modules/storage` không còn: storage đã chuyển lên `services/` (xem dòng dưới) |
-| Module `screenHMI` (`modules/screenHMI`) | Phiên 6: ST7796 qua `sx_i80`, reset qua `sx_gpio`, backlight PWM qua `sx_pwm`. Chỉ gửi lệnh MIPI DCS chuẩn; bảng lệnh riêng của panel do board truyền vào. **Đã chạy trên máy host** (hợp đồng `sx_*` giả lập) và biên dịch sạch bằng GCC 14.2 cho ESP32-S3. **Chưa build trong dự án, chưa chạy trên phần cứng** |
-| Module `touch` (`modules/touch`) | Phiên 6: FT6x36/FT5x06 (FT6336U) qua `sx_i2c`, chỉ đọc thanh ghi, dùng polling (không dùng chân INT). Kiểm chứng giống `screenHMI`. **Chưa build trong dự án, chưa chạy trên phần cứng** |
+| Module `screenHMI` (`modules/screenHMI`) | Phiên 6: ST7796 qua `sx_i80`, reset qua `sx_gpio`, backlight PWM qua `sx_pwm`. Chỉ gửi lệnh MIPI DCS chuẩn; bảng lệnh riêng của panel do board truyền vào. **Đã chạy trên máy host** (hợp đồng `sx_*` giả lập) và biên dịch sạch bằng GCC 14.2 cho ESP32-S3. Đã build trong dự án ở sandbox (phiên 6, không có cảnh báo biên dịch từ code dự án); **chưa chạy trên phần cứng** |
+| Module `touch` (`modules/touch`) | Phiên 6: FT6x36/FT5x06 (FT6336U) qua `sx_i2c`, chỉ đọc thanh ghi, dùng polling (không dùng chân INT). Kiểm chứng giống `screenHMI`. Đã build trong dự án ở sandbox (phiên 6, không có cảnh báo biên dịch từ code dự án); **chưa chạy trên phần cứng** |
 | Services (http, AI) | Chỉ là file rỗng |
 | Service `storage` (`services/storage`) | Phiên 6: API file trên thẻ SD (mount, open/read/write/seek, list, mkdir, remove, rename, đọc/ghi cả file), nối FatFs vào `sdcard` qua `storage_diskio.c`. **Đã chạy trên máy host** (FatFs thật, thẻ SD giả lập bằng RAM, ASan và UBSan, 0 lỗi) và biên dịch sạch với `-Wall -Wextra -Wshadow -Wconversion -Wsign-conversion -Wpedantic`. Chủ dự án đã chạy `idf.py build` thành công cho esp32s3 (phiên 6). Chưa thử với thẻ thật, chưa chạy trên phần cứng. Lưu ý: `app_init()` chưa được ai gọi nên linker có thể bỏ code storage, kích thước bin chưa phản ánh chi phí thật của FatFs Chưa có `board_init()` nên chưa có code gọi `storage_init` |
 | `libs/` (FatFs R0.16 của ChaN, cJSON) | Phiên 6: `libs/CMakeLists.txt` đăng ký component `libs` chỉ build FatFs (`ff.c`, `ffsystem.c`, `ffunicode.c`). cJSON nằm trong thư mục nhưng **chưa build**. Không dùng component `fatfs` của ESP-IDF |
@@ -66,6 +67,8 @@ touch FT6336U/FT5x06 I2C, microSD SPI, speaker I2S có amp onboard, RS485 onboar
 - Giá trị MADCTL cho từng hướng, có đảo màu (INVON) hay không, thứ tự RGB/BGR: chưa xác minh trên board.
 - Bản đồ thanh ghi và ý nghĩa cờ sự kiện của touch (TD_STATUS 0x02, điểm đầu từ 0x03, ID 0xA3/0xA6/0xA8): theo bản đồ FocalTech thông dụng, chưa đối chiếu datasheet của chip trên board. Cực tính và chế độ chân INT chưa xác minh nên chưa dùng.
 
+- Cấu hình `sdkconfig` đang commit: flash `2MB`, `CONFIG_SPIRAM` chưa bật, `CONFIG_FREERTOS_HZ=100`. Đây là giá trị đang có trong file, **không phải** thông số đã xác minh của board (phiên 7 chỉ đọc file, chưa đối chiếu phần cứng).
+
 Cách xác minh: schematic đúng revision V15, hoặc đo thực tế, hoặc `idf.py flash monitor` để xem thông số Flash/PSRAM khi boot.
 
 ## 5. Nhật ký các phiên
@@ -98,113 +101,6 @@ Quyết định đã chốt với chủ dự án:
 - `sx_i2c`: lệnh đọc/ghi không phân biệt được NACK với lỗi bus (driver ESP-IDF trả mã chung); dùng `sx_i2c_probe` để phân biệt.
 - `sx_spi`: `timeout_ms` không có hiệu lực trên ESP32-S3 (driver không hỗ trợ).
 - `utils/cqueue` có vài chỗ cần chỉnh (xem Firmware_Construction.md mục 9), chưa sửa vì là code của chủ dự án.
-
-## 6. Việc đang chờ chủ dự án
-
-Phiên 3 đã đổi tên hai file trong bản sao của sandbox. Trên máy của chủ dự án cần chạy (Git trên Windows không nhận đổi hoa/thường):
-
-```powershell
-git mv -f LoganSDK/services/CmakeLists.txt LoganSDK/services/CMakeLists.txt
-git mv LoganSDK/app/user/screen_app/screem_app.c LoganSDK/app/user/screen_app/screen_app.c
-```
-
-Chép đè các `CMakeLists.txt` đã present ở phiên 3 (root, `main`, `app`, `board`, `modules`, `peripherals`, `platform/esp32s3` là file mới, `services`, `utils`).
-
-Dọn tùy chọn, chờ chủ dự án duyệt (các file rỗng này không nằm trong `SRCS`, không ảnh hưởng build):
-`LoganSDK/components/peripherals/{gpio/sx_gpio.c,i2c/sx_i2c.c,i2s/sx_i2s.c,i80/sx_i80.c,spi/sx_spi.c}` và `LoganSDK/platform/CMakeLists.txt` (rỗng, không phải component).
-
-Phiên 5 kiểm tra lại sau `git pull`: hai lệnh `git mv` ở trên **vẫn chưa vào git** (repo còn `CmakeLists.txt` và `screem_app.c`), nên build trên Linux lỗi cho tới khi chạy chúng.
-
-Phiên 6 kiểm tra lại: hai lệnh `git mv` (`CmakeLists.txt`, `screem_app.c`) **vẫn chưa vào git**; hai file `sx_sdcard.h` và `esp32s3_sdcard.c` đã được xóa (phần đó xong).
-
-Phiên 6, chủ dự án đã xác nhận thứ tự layer là app > services > modules > peripherals > platform (chỉ gọi xuống dưới), và `utils` là logic thuần nên mọi layer dùng được. `Firmware_Construction.md` (mục 1, 2, 7) đã được sửa cho khớp. Các thay đổi sau đã được chấp nhận:
-
-- `services` giờ `REQUIRES modules utils` và `PRIV_REQUIRES libs`. Lý do: `storage.h` include `sdcard.h` của `modules`, và `storage.c` dùng FatFs ở `libs`.
-- `libs` được thêm vào `EXTRA_COMPONENT_DIRS` ở `CMakeLists.txt` gốc (trước đó ghi "không liệt kê").
-- `app/CMakeLists.txt`: thêm `user/storage_app/storage_app.c` và include dir `user/storage_app`, vì `app.c` có `#include "storage_app.h"` mà trước đó thư mục này không có trong `INCLUDE_DIRS`.
-- `modules/CMakeLists.txt`: bỏ `storage/storage.c` và include dir `storage` (thư mục này không còn, đây là lỗi cấu hình CMake thật gặp ở phiên trước).
-
-Cần chạy trên máy chủ dự án (Git trên Windows). Phiên 6 đã sửa nội dung `services/CMakeLists.txt` nên chỉ cần đổi tên rồi chép đè file đã present:
-
-```powershell
-git mv -f LoganSDK/services/CmakeLists.txt LoganSDK/services/CMakeLists.txt
-git mv LoganSDK/app/user/screen_app/screem_app.c LoganSDK/app/user/screen_app/screen_app.c
-```
-
-Phiên 5 chuyển thẻ SD khỏi peripheral. Cần chạy trên máy của chủ dự án để xóa hai file cũ:
-
-```powershell
-git rm LoganSDK/components/peripherals/sdcard/sx_sdcard.h LoganSDK/platform/esp32s3/sdcard/esp32s3_sdcard.c
-```
-
-(Đã xử lý ở phiên 6, xem Phiên 6) Cần chủ dự án quyết định: nối FatFs cho `sdcard`. `ff.h` và `diskio_impl.h` thuộc component `fatfs` của ESP-IDF nên cần thêm `fatfs` vào `REQUIRES` của `modules`; quy tắc hiện tại chỉ cho `modules` dùng `peripherals` và `utils`. Đề xuất đặt phần nối này trong module `storage` (một file riêng), không đụng vào `sdcard`.
-
-Danh sách lệnh đổi tên cũ của phiên 1 (đã lỗi thời, 4 file `esp32s3_*.c` đã ở đúng chỗ):
-
-```powershell
-git mv LoganSDK/components/peripherals/gpio/sx_gpio.c LoganSDK/platforms/esp32s3/gpio/esp32s3_gpio.c
-git mv LoganSDK/components/peripherals/i2c/sx_i2c.c   LoganSDK/platforms/esp32s3/i2c/esp32s3_i2c.c
-git mv LoganSDK/components/peripherals/spi/sx_spi.c   LoganSDK/platforms/esp32s3/spi/esp32s3_spi.c
-git mv LoganSDK/components/peripherals/i80/sx_i80.c   LoganSDK/platforms/esp32s3/i80/esp32s3_i80.c
-git mv -f LoganSDK/services/CmakeLists.txt LoganSDK/services/CMakeLists.txt
-git mv LoganSDK/app/user/screen_app/screem_app.c LoganSDK/app/user/screen_app/screen_app.c
-```
-
-(Nếu các file `esp32s3_*.c` đã được chép vào đúng chỗ thì bỏ 4 lệnh đầu và xóa các file `sx_*.c` rỗng cũ.)
-
-Cần quyết định hoặc cung cấp:
-
-- Mục đích của thư mục `libs/` (đang trống, chưa nối vào build).
-- Schematic V15 hoặc kết quả xác minh chân, loại PSRAM, microphone, RS485.
-
-Quyết định còn mở:
-
-- Tên thư mục chip: repo dùng `LoganSDK/platform/esp32s3` (số ít) nhưng `Firmware_Construction.md` và một số tài liệu ghi `platforms/`. Phiên 3 giữ theo repo (code). Đề xuất sửa tài liệu cho khớp, chưa sửa vì chưa được duyệt.
-- Tên file tài liệu: repo là `HandOver.md`, `RuleCode.md`, `RuleAgent.md`; các tài liệu vẫn nhắc `handover.md`, `rule_code.md`.
-- Khôi phục `board.h` đầy đủ (nhãn `REF/DESIGN/GIVEN`, `BOARD_PINMAP_VERIFIED=0`), `board_init()` và `app_start()`; chưa làm vì chưa được yêu cầu.
-
-## 7. Kế hoạch tiếp theo
-
-Thứ tự đề xuất (mỗi bước phải build được trước khi sang bước sau). Bước 0 đã xong ở phiên 3 (CMake nối layer, build OK).
-
-0. (Xong) Nối CMake và build.
-0b. Khôi phục `board.h`, `board.c` (`board_init()`), `app.c` (`app_start()`), nối từ `app_main()`.
-
-1. (Xong ở phiên 5: build OK) `sx_pwm`, `sx_uart`, callback ngắt của `sx_gpio`. Cần review API trước khi dùng. Module `sdcard` đã viết, xem Phiên 5.
-2. Modules: `speaker`. (`screenHMI` và `touch` đã viết ở phiên 6, xem nhật ký.) (`storage` đã viết ở phiên 6, nằm ở `services/storage`.)
-3. Bring-up trên phần cứng (chủ dự án chạy `set-target`, build, flash): xác minh Flash/PSRAM, chân, LCD hiển thị, touch đọc được, SD mount, speaker ra tiếng, thử mic.
-
-### Phiên 4 (2026-11-04)
-
-Đã làm:
-
-- Thêm hợp đồng và hiện thực ESP32-S3 cho `sx_pwm` bằng LEDC, `sx_sdcard` bằng SPI + FATFS,
-  và `sx_uart` cho UART thường hoặc RS485 half-duplex.
-- Thêm đăng ký/gỡ callback ISR cho `sx_gpio`, phục vụ chân INT của touch.
-- Nối các header và driver mới vào CMake của component `peripherals` và `platform/esp32s3`.
-- Cập nhật tài liệu kiến trúc; không đưa pinout V15 vào code vì chưa được xác minh.
-
-Chưa kiểm chứng:
-
-- Máy hiện tại không có `idf.py` hoặc `IDF_PATH`, nên chưa build lại sau các thay đổi phiên 4.
-- Chưa chạy trên phần cứng; chân PWM, SD và RS485 vẫn chưa xác minh.
-- `screem_app.c` vẫn chưa được đổi tên trong repo thực tế dù handover phiên 3 ghi đã đổi.
-
-Kế hoạch tiếp theo:
-
-- Chạy `idf.py set-target esp32s3` và `idf.py build` trong môi trường ESP-IDF 5.4.3.
-- Sau khi build đạt, nối các module `screenHMI`, `storage`, `speaker` và dùng cấu hình board được xác minh.
-4. Wi-Fi.
-5. Phase 3 (LVGL, màn hình) trở đi theo roadmap trong Product_Construction.md.
-
-## 8. Ghi chú môi trường (cho phiên chạy trong sandbox)
-
-- Sandbox Linux, **không truy cập được `E:\...` của chủ dự án**; làm việc bằng cách clone repo và present file.
-- Mạng sandbox chặn `dl.espressif.com`. ESP-IDF cài được qua github.com (clone `v5.4.3 --recursive`, `install.sh esp32s3`), nhưng:
-  - cần đặt `IDF_PYTHON_CHECK_CONSTRAINTS=no`;
-  - cài Python requirements trực tiếp từ PyPI (`pip install --index-url https://pypi.org/simple -r tools/requirements/requirements.core.txt`);
-  - cài `cmake==3.30.5` và `ninja` bằng pip (CMake 4.x chưa dùng cho IDF 5.4).
-- Build thử trên bản sao của repo, không `set-target` trong repo thật.
 
 ### Phiên 2 (2026-11-04)
 
@@ -245,6 +141,29 @@ Chưa làm hoặc chưa kiểm chứng:
 Điểm cần lưu ý:
 
 - `peripherals` là component chỉ có header nên không sinh thư viện `.a`; điều này là đúng.
+
+### Phiên 4 (2026-11-04)
+
+Đã làm:
+
+- Thêm hợp đồng và hiện thực ESP32-S3 cho `sx_pwm` bằng LEDC, `sx_sdcard` bằng SPI + FATFS,
+  và `sx_uart` cho UART thường hoặc RS485 half-duplex.
+- Thêm đăng ký/gỡ callback ISR cho `sx_gpio`, phục vụ chân INT của touch.
+- Nối các header và driver mới vào CMake của component `peripherals` và `platform/esp32s3`.
+- Cập nhật tài liệu kiến trúc; không đưa pinout V15 vào code vì chưa được xác minh.
+
+Chưa kiểm chứng:
+
+- Máy hiện tại không có `idf.py` hoặc `IDF_PATH`, nên chưa build lại sau các thay đổi phiên 4.
+- Chưa chạy trên phần cứng; chân PWM, SD và RS485 vẫn chưa xác minh.
+- `screem_app.c` vẫn chưa được đổi tên trong repo thực tế dù handover phiên 3 ghi đã đổi.
+
+Kế hoạch tiếp theo:
+
+- Chạy `idf.py set-target esp32s3` và `idf.py build` trong môi trường ESP-IDF 5.4.3.
+- Sau khi build đạt, nối các module `screenHMI`, `storage`, `speaker` và dùng cấu hình board được xác minh.
+4. Wi-Fi.
+5. Phase 3 (LVGL, màn hình) trở đi theo roadmap trong Product_Construction.md.
 
 ### Phiên 5 (2026-11-05)
 
@@ -364,4 +283,77 @@ Chưa làm hoặc chưa kiểm chứng:
 - Chưa có ai gọi `sx_time`, nên linker có thể loại bỏ nó khỏi bin; kích thước bin chưa phản ánh chi phí thật.
 - Busy wait giữ CPU: `screen_hmi_fill_rect` chờ theo bước 1 ms bằng busy wait. Chấp nhận được cho bring-up, không dành cho đường chạy chính.
 - `sdcard` vẫn đếm timeout theo số lần poll (không dùng `sx_time`); có thể đổi sang thời gian thật sau, chưa làm.
-- `sdkconfig` đang được commit vào git (`.gitignore` chỉ có `build/`). Cần chủ dự án quyết định có giữ không.
+
+### Phiên 7 (2026-11-06)
+
+Đã làm:
+
+- Clone repo (HEAD `e4597ee`), đọc `HandOver.md`, `RuleCode.md`, `RuleAgent.md`, `Firmware_Construction.md`, `Product_Construction.md`, đối chiếu với repo.
+- Phát hiện lệch: `esp32c3_time.c` chưa được đổi tên trong git trong khi `platform/esp32s3/CMakeLists.txt` trỏ tới `time/esp32s3_time.c` (theo cách đọc CMake, build sẽ lỗi thiếu file; chưa kiểm chứng bằng build). Tên file docs (`HandOver.md`, `RuleCode.md`) khác với tên mà các tài liệu nhắc (`handover.md`, `rule_code.md`). Mục 6 của handover còn nhiều lệnh đã lỗi thời.
+- Chủ dự án tự đổi tên `esp32c3_time.c` thành `esp32s3_time.c` và push (commit `aa0d00c`). Đã `git pull` và xác nhận: đổi tên 100% (nội dung giữ nguyên), tên file khớp với CMake.
+- Cập nhật `docs/HandOver.md` (file duy nhất đổi trong phiên này, chưa có file code nào đổi):
+  - Mục 6: xóa các lệnh `git mv` / `git rm` và các mục chờ quyết định đã xong (đã đối chiếu với repo ở commit `aa0d00c`: `services/CMakeLists.txt`, `screen_app.c`, `esp32s3_time.c` đúng tên, `sx_sdcard.h` và `esp32s3_sdcard.c` đã xóa, `libs` đã nối, `storage_app` đã nằm trong CMake của `app`).
+  - Mục 3: thêm dòng `sx_time`, sửa trạng thái Phase 1, `screenHMI` và `touch` cho khớp nhật ký phiên 6 (đã build trong sandbox).
+  - Mục 4: ghi lại giá trị `sdkconfig` đang có (chưa xác minh).
+  - Mục 1 và đầu file: sửa tên file docs cho khớp repo.
+  - Mục 5: gom nhật ký phiên 1 đến 7 về đúng một chỗ theo thứ tự. Trước đó phiên 4 nằm trong mục 7 và phiên 2, 3, 5, 6 nằm trong mục 8. Nội dung các phiên cũ giữ nguyên, không sửa.
+
+Đã kiểm chứng:
+
+- Chỉ đọc file và kiểm tra git (`git pull`, danh sách file, đọc CMake). **Không build, không chạy** trong phiên này (sandbox không có ESP-IDF).
+
+Chưa làm hoặc chưa kiểm chứng:
+
+- Chưa build lại sau commit `aa0d00c`, chưa chạy trên phần cứng.
+- Phiên này chưa có nhiệm vụ code nào được giao khi cập nhật handover; nếu có việc làm thêm sau mục này, phiên sau cần xem commit mới.
+
+Kế hoạch tiếp theo: xem mục 7.
+
+## 6. Việc đang chờ chủ dự án
+
+Đã xong và đã gỡ khỏi mục này ở phiên 7 (đối chiếu với repo ở commit `aa0d00c`): các lệnh `git mv` của `CmakeLists.txt`, `screem_app.c` và `esp32c3_time.c`; `git rm` của `sx_sdcard.h` và `esp32s3_sdcard.c`; chép đè các `CMakeLists.txt`; nối FatFs và mục đích của `libs/`. Các thay đổi CMake ở phiên 6 (`services` `REQUIRES modules utils`, `PRIV_REQUIRES libs`; `libs` trong `EXTRA_COMPONENT_DIRS`; `storage_app` trong `app`; bỏ `storage` khỏi `modules`) đã nằm trong repo.
+
+Đã chốt ở phiên 6: thứ tự layer là app > services > modules > peripherals > platform (chỉ gọi xuống dưới); `utils` là logic thuần nên mọi layer dùng được.
+
+Cần chủ dự án làm:
+
+- Chạy `idf.py build` trên máy của mình sau commit `aa0d00c` (lần build đầu có `sx_time`, `screenHMI`, `touch` trên máy chủ dự án). Lưu ý đã gặp ở phiên 6: biến môi trường `IDF_TARGET=esp32` trong shell làm `set-target esp32s3` báo lệch; lệnh `idf.py set-target esp32-s3` chạy được.
+- Cung cấp schematic V15 hoặc kết quả xác minh: chân LCD, touch, SD, I2S, RS485, loại PSRAM và dung lượng Flash, có microphone hay không (xem mục 4).
+
+Dọn tùy chọn, chờ chủ dự án duyệt (không nằm trong `SRCS`, không ảnh hưởng build):
+
+- `LoganSDK/components/peripherals/{gpio/sx_gpio.c,i2c/sx_i2c.c,i2s/sx_i2s.c,i80/sx_i80.c,spi/sx_spi.c}` (file rỗng).
+- `LoganSDK/platform/CMakeLists.txt` (cũ, không phải component) và `LoganSDK/CMakeLists.txt` (0 byte).
+- `LoganSDK/platform/esp32s3/{gpio/esp32s3_gpio.h,i2c/esp32s3_i2c.h,i80/esp32s3_i80.h,spi/esp32s3_spi.h}` (file rỗng, nằm trong thư mục có trong `INCLUDE_DIRS`).
+
+Quyết định còn mở:
+
+- Tên thư mục chip: repo dùng `LoganSDK/platform/esp32s3` (số ít) nhưng `Firmware_Construction.md` và một số tài liệu ghi `platforms/`. Đề xuất sửa tài liệu cho khớp, chưa sửa vì chưa được duyệt.
+- Tên file tài liệu: repo là `HandOver.md`, `RuleCode.md`, `RuleAgent.md`; một số tài liệu vẫn nhắc `handover.md`, `rule_code.md`. Chưa sửa vì chưa được duyệt.
+- Khôi phục `board.h` đầy đủ (nhãn `REF/DESIGN/GIVEN`, `BOARD_PINMAP_VERIFIED=0`), `board_init()` và hàm khởi động app. Hiện `app.c` có `app_init()` chứ không phải `app_start()`; cần chốt tên và nối từ `app_main()`. Chưa làm vì chưa được yêu cầu.
+- `sdkconfig` đang được commit (`.gitignore` chỉ có `build/`): giữ hay không.
+- Có build cJSON trong `libs/` hay không, và dùng ở layer nào.
+- Mức ưu tiên và stack của `storage_app` (hiện 4096 và 4, ghi trong `storage_app.h` là chưa chắc).
+- Các điểm cần chỉnh của `utils/cqueue` (xem `Firmware_Construction.md` mục 9): chưa sửa vì là code của chủ dự án.
+
+## 7. Kế hoạch tiếp theo
+
+Thứ tự đề xuất (mỗi bước phải build được trước khi sang bước sau).
+
+0. (Xong) Nối CMake và build.
+0a. Chủ dự án build lại trên máy sau commit `aa0d00c` (xem mục 6).
+0b. Khôi phục `board.h`, `board.c` (`board_init()`), hàm khởi động trong `app.c`, nối từ `app_main()`. Cần chủ dự án chốt tên hàm và cần schematic cho chân (giữ nhãn `chưa xác minh`).
+1. (Xong ở phiên 5: build OK) `sx_pwm`, `sx_uart`, callback ngắt của `sx_gpio`.
+2. Modules: `speaker` (còn rỗng). `screenHMI` và `touch` đã viết ở phiên 6; `storage` đã viết ở phiên 6 và nằm ở `services/storage`.
+2b. `storage_app` (task duy nhất gọi `storage_*`), sau khi có `board_init()` tạo `sdcard_t`, `sdcard_config_t`, `storage_config_t`.
+3. Bring-up trên phần cứng (chủ dự án chạy build và flash): xác minh Flash/PSRAM, chân, LCD hiển thị, touch đọc được, SD mount, speaker ra tiếng, thử mic.
+4. LVGL (flush callback, đọc input từ touch), Wi-Fi, http, OTA: chưa bắt đầu. Sau đó theo roadmap trong `Product_Construction.md`.
+
+## 8. Ghi chú môi trường (cho phiên chạy trong sandbox)
+
+- Sandbox Linux, **không truy cập được `E:\...` của chủ dự án**; làm việc bằng cách clone repo và present file.
+- Mạng sandbox chặn `dl.espressif.com`. ESP-IDF cài được qua github.com (clone `v5.4.3 --recursive`, `install.sh esp32s3`), nhưng:
+  - cần đặt `IDF_PYTHON_CHECK_CONSTRAINTS=no`;
+  - cài Python requirements trực tiếp từ PyPI (`pip install --index-url https://pypi.org/simple -r tools/requirements/requirements.core.txt`);
+  - cài `cmake==3.30.5` và `ninja` bằng pip (CMake 4.x chưa dùng cho IDF 5.4).
+- Build thử trên bản sao của repo, không `set-target` trong repo thật.
