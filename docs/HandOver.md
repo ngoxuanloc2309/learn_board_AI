@@ -31,7 +31,7 @@
 | Module `sdcard` (`components/modules/sdcard`) | Phiên 5: block device SD-SPI trên `sx_spi`. **Đã build trên target esp32s3 (0 cảnh báo) và đã chạy thử trên máy host với thẻ SD giả lập** (SDHC, SDSC, MMC, không có thẻ, cấu hình sai); **chưa thử với thẻ thật**. Chưa có hệ thống tệp (FatFs) |
 | Modules (screenHMI, touch, speaker) | Chỉ là file rỗng. Thư mục `modules/storage` không còn: storage đã chuyển lên `services/` (xem dòng dưới) |
 | Services (http, AI) | Chỉ là file rỗng |
-| Service `storage` (`services/storage`) | Phiên 6: API file trên thẻ SD (mount, open/read/write/seek, list, mkdir, remove, rename, đọc/ghi cả file), nối FatFs vào `sdcard` qua `storage_diskio.c`. **Đã chạy trên máy host** (FatFs thật, thẻ SD giả lập bằng RAM, ASan và UBSan, 0 lỗi) và biên dịch sạch với `-Wall -Wextra -Wshadow -Wconversion -Wsign-conversion -Wpedantic`. **Chưa build đầy đủ bằng `idf.py build`**, chưa thử với thẻ thật, chưa chạy trên phần cứng. Chưa có `board_init()` nên chưa có code gọi `storage_init` |
+| Service `storage` (`services/storage`) | Phiên 6: API file trên thẻ SD (mount, open/read/write/seek, list, mkdir, remove, rename, đọc/ghi cả file), nối FatFs vào `sdcard` qua `storage_diskio.c`. **Đã chạy trên máy host** (FatFs thật, thẻ SD giả lập bằng RAM, ASan và UBSan, 0 lỗi) và biên dịch sạch với `-Wall -Wextra -Wshadow -Wconversion -Wsign-conversion -Wpedantic`. Chủ dự án đã chạy `idf.py build` thành công cho esp32s3 (phiên 6). Chưa thử với thẻ thật, chưa chạy trên phần cứng. Lưu ý: `app_init()` chưa được ai gọi nên linker có thể bỏ code storage, kích thước bin chưa phản ánh chi phí thật của FatFs Chưa có `board_init()` nên chưa có code gọi `storage_init` |
 | `libs/` (FatFs R0.16 của ChaN, cJSON) | Phiên 6: `libs/CMakeLists.txt` đăng ký component `libs` chỉ build FatFs (`ff.c`, `ffsystem.c`, `ffunicode.c`). cJSON nằm trong thư mục nhưng **chưa build**. Không dùng component `fatfs` của ESP-IDF |
 | App tasks | Chỉ là file rỗng. `app_start()` và `board_init()` **chưa tồn tại**; `app_main()` rỗng |
 | LVGL, Wi-Fi, OTA | Chưa bắt đầu |
@@ -289,10 +289,11 @@ Kế hoạch tiếp theo:
 - Chạy trên máy host (ASan và UBSan) `storage.c` + `storage_diskio.c` + FatFs R0.16 thật với `sdcard_*` giả lập bằng RAM (8192 khối): không có thẻ, thẻ trống không format (`STORAGE_ERR_NO_FS`, thẻ được trả lại), format rồi mount, đọc/ghi file nhỏ và file 100 KB nhiều cluster, ghi đè và thu nhỏ file, tên file dài và không phân biệt hoa thường, append, seek, kiểm tra đường dẫn sai, giới hạn 4 file mở, thư mục lồng nhau, list (đếm, dừng giữa chừng), stat, xóa thư mục không rỗng, đổi tên (kể cả đích đã tồn tại), unmount rồi mount lại và dữ liệu còn nguyên (không format lại), thẻ do chủ khác khởi tạo thì storage không giải phóng, thẻ đầy trả `STORAGE_ERR_FULL` và ghi lại được sau khi xóa. 0 lỗi.
 - Biên dịch sạch `storage.c`, `storage_diskio.c` với `-Wall -Wextra -Wshadow -Wconversion -Wsign-conversion -Wpedantic` trên host. Bài test nằm ngoài repo (không commit).
 - Dựng ESP-IDF v5.4.3 trong sandbox (theo mục 8) và chạy `idf.py set-target esp32s3` trên bản sao: **cấu hình CMake thành công** với bố cục component mới (có `libs`). Cần áp tạm hai đổi tên ở mục 6 để chạy trên Linux.
+- Chủ dự án chạy `idf.py build` trên Windows (ESP-IDF v5.4.3, GCC 14.2.0, target esp32s3): **build thành công**. `board_hmi_ai.bin` 0x2e050 byte, phân vùng app nhỏ nhất 0x100000 byte, còn trống 82%; bootloader 0x51c0 byte. Hai lỗi gặp trên đường: (1) `CMakeLists.txt` gốc chưa có `libs` (chưa chép đè), (2) shell có biến môi trường `IDF_TARGET=esp32` nên `set-target esp32s3` báo lệch; lệnh `idf.py set-target esp32-s3` chạy được. Đổi tên `screem_app.c` sang `screen_app.c` đã làm xong.
 
 Chưa làm hoặc chưa kiểm chứng:
 
-- **Chưa chạy `idf.py build` đầy đủ** (theo yêu cầu của chủ dự án, phiên này bỏ qua). Chưa biết `ff.c`, `ffunicode.c` có cảnh báo hay lỗi với toolchain ESP-IDF không, chưa kiểm tra xung đột với component `fatfs` có sẵn của ESP-IDF (cả hai cùng định nghĩa `f_open`...; component `fatfs` của ESP-IDF không nằm trong `REQUIRES` của ai nên kỳ vọng không bị link, nhưng chưa xác nhận), chưa biết kích thước Flash và RAM thêm vào.
+- Chưa có log cảnh báo đầy đủ của lần build thành công (chủ dự án chỉ gửi phần cuối), nên chưa biết `ff.c`, `ffunicode.c` có cảnh báo không. Chưa kiểm tra tường minh việc không xung đột với component `fatfs` của ESP-IDF, nhưng link đã thành công. Chưa đo chi phí Flash và RAM của FatFs vì code storage chưa được gọi từ `main`.
 - Chưa thử với thẻ SD thật, chưa chạy trên phần cứng. Giả lập chỉ chứng minh logic khớp mô hình do chính phiên này viết.
 - `storage` chưa có chủ sở hữu: chưa có `board_init()` tạo `sdcard_t`, `sdcard_config_t`, `storage_config_t` (và cấu hình SPI/chân CS, vẫn chưa xác minh). `storage_app.c` và `app_storage_init()` vẫn rỗng.
 - Không thread-safe (FatFs build với `FF_FS_REENTRANT=0`, một buffer tên dùng chung): phải gọi từ một task duy nhất (storage task). Không có RTC (`FF_FS_NORTC=1`) nên mọi file có cùng dấu thời gian cố định. Ghi cả file không atomic (mất điện giữa chừng có thể để lại file dở). Chỉ truy cập từng khối 512 byte (xem hạn chế của `sdcard`), nên tốc độ chưa tối ưu.
@@ -301,7 +302,7 @@ Chưa làm hoặc chưa kiểm chứng:
 
 Kế hoạch tiếp theo:
 
-- Chạy `idf.py build` đầy đủ (kiểm tra cảnh báo của FatFs, xung đột `fatfs`, kích thước) trước khi nối tiếp.
+- Xem lại cảnh báo của FatFs trong log build đầy đủ, và đo lại kích thước sau khi `app_init()` được gọi từ `main`.
 - Khôi phục `board.h`, `board_init()`, `app_start()` (bước 0b mục 7): khi đó `board.c` sở hữu `sdcard_t`, `sdcard_config_t` và `storage_config_t`.
 - Viết `storage_app` (task duy nhất gọi `storage_*`), sau khi chủ dự án quyết định mức ưu tiên và stack.
 - Bring-up thẻ SD thật khi có xác minh chân.
