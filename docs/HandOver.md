@@ -29,7 +29,8 @@
 | Peripheral `sx_gpio`, `sx_i2c`, `sx_spi`, `sx_i80`, `sx_i2s` | Hợp đồng và hiện thực ESP32-S3 đã viết, **đã compile trong build đầy đủ (phiên 3), chưa chạy trên phần cứng**. Chưa kiểm chứng link vào firmware vì chưa có code nào gọi chúng |
 | Peripheral `sx_pwm`, `sx_uart`, ngắt của `sx_gpio` | Viết ở phiên 4. Phiên 5: sửa lỗi compile ở `esp32s3_gpio.c`, **build đầy đủ thành công (0 cảnh báo)**; chưa chạy trên phần cứng |
 | Peripheral `sx_time` | Phiên 6: `sx_delay_ms`, `sx_get_time_ms` (`sx_time.h` và `platform/esp32s3/time/esp32s3_time.c`). Đã chạy trên máy host (giả lập FreeRTOS, `esp_timer`) và đã build đầy đủ trong sandbox. Phiên 7: chủ dự án đã đổi tên `esp32c3_time.c` thành `esp32s3_time.c` và push (commit `aa0d00c`), khớp với `platform/esp32s3/CMakeLists.txt`. Chưa chạy trên phần cứng, chưa có ai gọi |
-| `sx_i2s` mở rộng (loa TX + mic RX) | Phiên 8: thêm `din_pin` và `sx_i2s_read`; quy ước `-1` (`SX_I2S_PIN_UNUSED`) là không dùng hướng đó; `dout_pin >= 0` tạo kênh TX, `din_pin >= 0` tạo kênh RX, cả hai trên một cổng là song công. Sửa lỗi timeout cũ (xem nhật ký phiên 8). **Đã chạy trên máy host** với driver I2S giả lập (ASan, UBSan, 0 lỗi, 6 đột biến đều bị bắt) và biên dịch sạch cảnh báo nghiêm ngặt trên host. **Chưa build bằng ESP-IDF, chưa chạy trên phần cứng.** Chưa có code nào gọi `sx_i2s` |
+| `sx_i2s` mở rộng (loa TX + mic RX) | Phiên 8: thêm `din_pin` và `sx_i2s_read`; quy ước `-1` (`SX_I2S_PIN_UNUSED`) là không dùng hướng đó; `dout_pin >= 0` tạo kênh TX, `din_pin >= 0` tạo kênh RX, cả hai trên một cổng là song công. Sửa lỗi timeout cũ (xem nhật ký phiên 8). **Đã chạy trên máy host** với driver I2S giả lập (ASan, UBSan, 0 lỗi, 6 đột biến đều bị bắt) và biên dịch sạch cảnh báo nghiêm ngặt trên host. **Chưa build bằng ESP-IDF, chưa chạy trên phần cứng.** Chỉ module `inmp441` gọi `sx_i2s` (phía RX); loa chưa có module |
+| Module `inmp441` (`components/modules/micro`) | Phiên 8: mic I2S MEMS INMP441 trên `sx_i2s`, chỉ nhận, mono, slot 32 bit, trả PCM 16 bit có dấu (16 bit cao của mẫu 24 bit). API: `inmp441_init/deinit/start/stop/read`. **Đã chạy trên máy host** (`sx_i2s` giả lập, ASan, UBSan, 0 lỗi) và biên dịch riêng file này sạch cảnh báo nghiêm ngặt, kể cả bằng GCC 14.2 cho ESP32-S3 (422 byte code). **Chưa build trong dự án, chưa chạy trên phần cứng**, chưa có ai gọi (chưa có `board_init()`) |
 | Module `sdcard` (`components/modules/sdcard`) | Phiên 5: block device SD-SPI trên `sx_spi`. **Đã build trên target esp32s3 (0 cảnh báo) và đã chạy thử trên máy host với thẻ SD giả lập** (SDHC, SDSC, MMC, không có thẻ, cấu hình sai); **chưa thử với thẻ thật**. Chưa có hệ thống tệp (FatFs) |
 | Modules (speaker) | Chỉ là file rỗng. Thư mục `modules/storage` không còn: storage đã chuyển lên `services/` (xem dòng dưới) |
 | Module `screenHMI` (`modules/screenHMI`) | Phiên 6: ST7796 qua `sx_i80`, reset qua `sx_gpio`, backlight PWM qua `sx_pwm`. Chỉ gửi lệnh MIPI DCS chuẩn; bảng lệnh riêng của panel do board truyền vào. **Đã chạy trên máy host** (hợp đồng `sx_*` giả lập) và biên dịch sạch bằng GCC 14.2 cho ESP32-S3. Đã build trong dự án ở sandbox (phiên 6, không có cảnh báo biên dịch từ code dự án); **chưa chạy trên phần cứng** |
@@ -335,6 +336,26 @@ Chưa làm hoặc chưa kiểm chứng:
 - Chưa kiểm chứng hành vi song công thật của driver ESP-IDF (hai kênh trên một cổng với cùng cấu hình chân) và hành vi của `i2s_del_channel` ở mọi trạng thái; chỉ dựa vào giả lập.
 - Không sửa `board.h`, `board.c`, header board mới của chủ dự án, `speaker`.
 
+Phiên 8 (tiếp, cùng ngày): module `inmp441`.
+
+Đã làm (chủ dự án đã push `sx_i2s` mở rộng ở commit `f2eef0d`, đúng bằng bản phiên 8, chỉ khác dòng cuối không có newline; đã tạo sẵn `micro/inmp441.c` và `.h` rỗng):
+
+- `LoganSDK/components/modules/micro/inmp441.h` và `inmp441.c` (viết vào hai file rỗng). Module chỉ dùng hợp đồng `sx_i2s`, không include `board.h` hay ESP-IDF. Cấu hình `inmp441_config_t`: `port`, `bclk_pin` (SCK), `ws_pin` (WS), `din_pin` (SD), `sample_rate_hz`. Module tự dựng cấu hình `sx_i2s`: `dout_pin = -1`, mono, 32 bit. `inmp441_read` đọc từng khối tối đa 128 slot (buffer 512 byte nằm trong `inmp441_t`, do board cấp phát tĩnh, không dùng heap), đổi sang `int16_t` bằng `raw >> 16`. Khi lỗi hoặc timeout, `*count` là số mẫu hợp lệ đã đọc. Phần slot lẻ byte trả `INMP441_ERR_BUS`. Không có phần chọn kênh phải: chỉ hỗ trợ L/R mức thấp (kênh trái).
+- `LoganSDK/components/modules/CMakeLists.txt` (sửa): thêm `micro/inmp441.c` và thư mục `micro` vào `INCLUDE_DIRS`; sửa comment đầu file.
+- `docs/Firmware_Construction.md` (sửa): thêm `inmp441` vào danh sách module, cập nhật dòng `sx_i2s` ở bảng trạng thái peripheral.
+
+Đã kiểm chứng:
+
+- Chạy trên máy host (ASan và UBSan) với `sx_i2s` giả lập: kiểm tra tham số, cấu hình `sx_i2s` mà module tạo ra, máy trạng thái init/start/stop/deinit và các đường lỗi (init lỗi rồi thử lại, deinit lỗi rồi thử lại), đổi mẫu (cực trị, số âm, thứ tự qua 3 khối), không ghi quá vùng yêu cầu, timeout giữa chừng giữ lại dữ liệu đã đọc, driver trả OK mà không có dữ liệu không gây vòng lặp vô hạn, ánh xạ mã lỗi. 0 lỗi. Không chạy thử đột biến cho module này.
+- Biên dịch `inmp441.c` sạch với `-Wall -Wextra -Wshadow -Wconversion -Wsign-conversion -Wpedantic` trên host, và bằng `xtensa-esp32s3-elf-gcc` 14.2.0 (`-Os`, cùng cờ), 422 byte code, không dữ liệu tĩnh. Đây là biên dịch một file, **không phải `idf.py build`**. Bài test và bản giả lập nằm ngoài repo (không commit); giả lập chỉ chứng minh logic khớp mô hình do chính phiên này viết.
+
+Chưa làm hoặc chưa kiểm chứng:
+
+- Chưa `idf.py build`, chưa chạy trên phần cứng, chưa nghe thử dữ liệu mic thật. Chưa kiểm tra mức tín hiệu thực tế: `raw >> 16` chỉ lấy 16 bit cao nên tiếng nhỏ có thể rất thấp biên độ; việc khuếch đại hoặc chuẩn hóa để gửi STT chưa làm (có thể xử lý ở app hoặc backend).
+- Thời gian khởi động của mic sau khi có clock (mẫu đầu không hợp lệ), dải tần số lấy mẫu hỗ trợ, độ lệch DC: theo datasheet thông dụng, chưa đối chiếu. Doc trong `inmp441.h` yêu cầu caller bỏ các mẫu đầu sau `inmp441_start`.
+- Chưa có `board_init()`: chưa ai tạo `inmp441_t` và `inmp441_config_t`. Dự kiến cấu hình: `port = 1`, `bclk_pin = 10`, `ws_pin = 11`, `din_pin = 12`, `sample_rate_hz = 16000` (theo gán chân của chủ dự án, chưa xác minh trên V15). Cổng 1 chọn để tách khỏi loa trên cổng 0, chưa có `speaker` nên chưa kiểm tra cùng lúc.
+- Module không thread-safe (như `touch`).
+
 ## 6. Việc đang chờ chủ dự án
 
 Đã xong và đã gỡ khỏi mục này ở phiên 7 (đối chiếu với repo ở commit `aa0d00c`): các lệnh `git mv` của `CmakeLists.txt`, `screem_app.c` và `esp32c3_time.c`; `git rm` của `sx_sdcard.h` và `esp32s3_sdcard.c`; chép đè các `CMakeLists.txt`; nối FatFs và mục đích của `libs/`. Các thay đổi CMake ở phiên 6 (`services` `REQUIRES modules utils`, `PRIV_REQUIRES libs`; `libs` trong `EXTRA_COMPONENT_DIRS`; `storage_app` trong `app`; bỏ `storage` khỏi `modules`) đã nằm trong repo.
@@ -344,7 +365,7 @@ Chưa làm hoặc chưa kiểm chứng:
 Cần chủ dự án làm:
 
 - Chạy `idf.py build` trên máy của mình sau commit `aa0d00c` (lần build đầu có `sx_time`, `screenHMI`, `touch` trên máy chủ dự án). Lưu ý đã gặp ở phiên 6: biến môi trường `IDF_TARGET=esp32` trong shell làm `set-target esp32s3` báo lệch; lệnh `idf.py set-target esp32-s3` chạy được.
-- Chạy `idf.py build` sau phiên 8 (file đổi: `sx_i2s.h`, `esp32s3_i2s.c`) và báo lỗi nếu có.
+- Chạy `idf.py build` sau phiên 8 (file đổi: `sx_i2s.h`, `esp32s3_i2s.c`, `modules/micro/inmp441.h`, `inmp441.c`, `modules/CMakeLists.txt`) và báo lỗi nếu có.
 - Xác nhận nguồn 3.3V cho INMP441 (header mở rộng không có 3.3V; chân +3.3V ở header debug ghi là chỉ tham khảo).
 - Cung cấp schematic V15 hoặc kết quả xác minh: chân LCD, touch, SD, I2S, RS485, loại PSRAM và dung lượng Flash, có microphone hay không (xem mục 4).
 
@@ -371,7 +392,7 @@ Thứ tự đề xuất (mỗi bước phải build được trước khi sang b
 0. (Xong) Nối CMake và build.
 0a. Chủ dự án build lại trên máy sau commit `aa0d00c` (xem mục 6).
 0b. Khôi phục `board.h`, `board.c` (`board_init()`), hàm khởi động trong `app.c`, nối từ `app_main()`. Cần chủ dự án chốt tên hàm và cần schematic cho chân (giữ nhãn `chưa xác minh`).
-0c. (Phiên 8, chờ chủ dự án build) `sx_i2s` hỗ trợ RX (mic) và sửa timeout. Sau đó: khôi phục `board.h` dùng nhãn `REF/DESIGN/GIVEN` và nối header `board_device/ZX3D50CE08S-V15-USRC.h` (cần định nghĩa hoặc thay macro `GPIO_xx`), rồi module `speaker` và `mic`.
+0c. (Phiên 8, chờ chủ dự án build) `sx_i2s` hỗ trợ RX (mic) và sửa timeout. Sau đó: khôi phục `board.h` dùng nhãn `REF/DESIGN/GIVEN` và nối header `board_device/ZX3D50CE08S-V15-USRC.h` (cần định nghĩa hoặc thay macro `GPIO_xx`), rồi module `speaker` và cấu hình `inmp441` trong `board_init()`.
 1. (Xong ở phiên 5: build OK) `sx_pwm`, `sx_uart`, callback ngắt của `sx_gpio`.
 2. Modules: `speaker` (còn rỗng). `screenHMI` và `touch` đã viết ở phiên 6; `storage` đã viết ở phiên 6 và nằm ở `services/storage`.
 2b. `storage_app` (task duy nhất gọi `storage_*`), sau khi có `board_init()` tạo `sdcard_t`, `sdcard_config_t`, `storage_config_t`.
