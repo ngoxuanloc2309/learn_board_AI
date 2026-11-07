@@ -13,9 +13,10 @@ extern "C" {
 #define EXT_IO5             GPIO_14
 #define EXT_IO6             GPIO_21
 
-/*Speaker Connector*/
-#define SPK_POSITIVE        ?           /*扬声器正*/
-#define SPK_NEGATIVE        ?           /*扬声器负*/
+/*Extensive I2S for micro*/
+#define I2S_MIC_BCLK        EXT_IO1
+#define I2S_MIC_WS          EXT_IO2
+#define I2S_MIC_DIN         EXT_IO3
 
 /*SDcard Interface*/
 #define SD_CS               GPIO_41
