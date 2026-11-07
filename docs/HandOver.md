@@ -1,7 +1,7 @@
 # Handover - AI Learning Device
 
 > File này do mọi phiên làm việc (Claude hoặc AI khác) cập nhật ở cuối phiên. Quy tắc: xem `RuleCode.md` mục 3.
-> Cập nhật lần cuối: 2026-11-06 (phiên 7).
+> Cập nhật lần cuối: 2026-11-07 (phiên 8).
 
 ## 1. Đọc trước khi làm
 
@@ -29,6 +29,7 @@
 | Peripheral `sx_gpio`, `sx_i2c`, `sx_spi`, `sx_i80`, `sx_i2s` | Hợp đồng và hiện thực ESP32-S3 đã viết, **đã compile trong build đầy đủ (phiên 3), chưa chạy trên phần cứng**. Chưa kiểm chứng link vào firmware vì chưa có code nào gọi chúng |
 | Peripheral `sx_pwm`, `sx_uart`, ngắt của `sx_gpio` | Viết ở phiên 4. Phiên 5: sửa lỗi compile ở `esp32s3_gpio.c`, **build đầy đủ thành công (0 cảnh báo)**; chưa chạy trên phần cứng |
 | Peripheral `sx_time` | Phiên 6: `sx_delay_ms`, `sx_get_time_ms` (`sx_time.h` và `platform/esp32s3/time/esp32s3_time.c`). Đã chạy trên máy host (giả lập FreeRTOS, `esp_timer`) và đã build đầy đủ trong sandbox. Phiên 7: chủ dự án đã đổi tên `esp32c3_time.c` thành `esp32s3_time.c` và push (commit `aa0d00c`), khớp với `platform/esp32s3/CMakeLists.txt`. Chưa chạy trên phần cứng, chưa có ai gọi |
+| `sx_i2s` mở rộng (loa TX + mic RX) | Phiên 8: thêm `din_pin` và `sx_i2s_read`; quy ước `-1` (`SX_I2S_PIN_UNUSED`) là không dùng hướng đó; `dout_pin >= 0` tạo kênh TX, `din_pin >= 0` tạo kênh RX, cả hai trên một cổng là song công. Sửa lỗi timeout cũ (xem nhật ký phiên 8). **Đã chạy trên máy host** với driver I2S giả lập (ASan, UBSan, 0 lỗi, 6 đột biến đều bị bắt) và biên dịch sạch cảnh báo nghiêm ngặt trên host. **Chưa build bằng ESP-IDF, chưa chạy trên phần cứng.** Chưa có code nào gọi `sx_i2s` |
 | Module `sdcard` (`components/modules/sdcard`) | Phiên 5: block device SD-SPI trên `sx_spi`. **Đã build trên target esp32s3 (0 cảnh báo) và đã chạy thử trên máy host với thẻ SD giả lập** (SDHC, SDSC, MMC, không có thẻ, cấu hình sai); **chưa thử với thẻ thật**. Chưa có hệ thống tệp (FatFs) |
 | Modules (speaker) | Chỉ là file rỗng. Thư mục `modules/storage` không còn: storage đã chuyển lên `services/` (xem dòng dưới) |
 | Module `screenHMI` (`modules/screenHMI`) | Phiên 6: ST7796 qua `sx_i80`, reset qua `sx_gpio`, backlight PWM qua `sx_pwm`. Chỉ gửi lệnh MIPI DCS chuẩn; bảng lệnh riêng của panel do board truyền vào. **Đã chạy trên máy host** (hợp đồng `sx_*` giả lập) và biên dịch sạch bằng GCC 14.2 cho ESP32-S3. Đã build trong dự án ở sandbox (phiên 6, không có cảnh báo biên dịch từ code dự án); **chưa chạy trên phần cứng** |
@@ -68,6 +69,9 @@ touch FT6336U/FT5x06 I2C, microSD SPI, speaker I2S có amp onboard, RS485 onboar
 - Bản đồ thanh ghi và ý nghĩa cờ sự kiện của touch (TD_STATUS 0x02, điểm đầu từ 0x03, ID 0xA3/0xA6/0xA8): theo bản đồ FocalTech thông dụng, chưa đối chiếu datasheet của chip trên board. Cực tính và chế độ chân INT chưa xác minh nên chưa dùng.
 
 - Cấu hình `sdkconfig` đang commit: flash `2MB`, `CONFIG_SPIRAM` chưa bật, `CONFIG_FREERTOS_HZ=100`. Đây là giá trị đang có trong file, **không phải** thông số đã xác minh của board (phiên 7 chỉ đọc file, chưa đối chiếu phần cứng).
+
+- Mic: file `LoganSDK/board/board_device/ZX3D50CE08S-V15-USRC.h` (commit `d134462`) gán `I2S_MIC_BCLK/WS/DIN` vào `EXT_IO1/2/3` (GPIO 10, 11, 12). Đây là lựa chọn của chủ dự án, chưa có loại mic cụ thể (ví dụ INMP441 hay không), nên **chưa xác minh**: độ rộng mẫu, mức chân L/R (kênh trái hay phải), `slot_mask`. Header này chưa được include ở đâu, dùng macro `GPIO_xx` chưa định nghĩa, chưa có nhãn `REF/DESIGN/GIVEN`, và có ký tự CJK trong comment (trái `RuleCode.md`, chưa sửa vì là code của chủ dự án).
+- `docs/ZX3D50CE08S-USRC-4832.md` (commit `17f1a80`) là datasheet dòng SC01 Plus; ảnh PCB trong đó ghi V13 220511, không phải V15. Nó nêu module `WT32-S3-WROVER-N16R2`, trong khi `sdkconfig` đang flash 2MB và chưa bật SPIRAM. Chưa xác minh cho V15.
 
 Cách xác minh: schematic đúng revision V15, hoặc đo thực tế, hoặc `idf.py flash monitor` để xem thông số Flash/PSRAM khi boot.
 
@@ -309,6 +313,28 @@ Chưa làm hoặc chưa kiểm chứng:
 
 Kế hoạch tiếp theo: xem mục 7.
 
+### Phiên 8 (2026-11-07)
+
+Đã làm:
+
+- Clone repo (HEAD `d134462`), đọc `HandOver.md`, `RuleCode.md`, `RuleAgent.md`, `Firmware_Construction.md`, `Product_Construction.md`, đối chiếu repo. Lệch phát hiện: 3 commit sau phiên 7 (`837bead` thêm `board_device/ZX3D50CE08S-V15-USRC.h`, `17f1a80` thêm datasheet SC01 Plus, `d134462` thêm chân mic I2S) chưa có trong handover; đã ghi ở mục 4.
+- Một log của phiên khác (đính kèm bởi chủ dự án) mô tả việc mở rộng `sx_i2s`, nhưng các thay đổi đó **không có trong repo** (`sx_i2s.h` chưa có `din_pin`, `esp32s3_i2s.c` chưa có kênh RX). Đã viết lại từ file thật theo thiết kế trong log, không dùng lại code trong log.
+- `LoganSDK/components/peripherals/i2s/sx_i2s.h` (sửa): thêm `din_pin`, `SX_I2S_PIN_UNUSED` (-1), `sx_i2s_read`, mô tả hợp đồng. Thêm trường `din_pin` vào struct: ai khởi tạo struct phải đặt `-1` cho hướng không dùng (hiện chưa có nơi nào gọi `sx_i2s`).
+- `LoganSDK/platform/esp32s3/i2s/esp32s3_i2s.c` (sửa, viết lại): tạo kênh TX khi `dout_pin >= 0`, kênh RX khi `din_pin >= 0` (một lần gọi `i2s_new_channel`); hai khóa riêng cho TX và RX để đọc và ghi không chặn nhau, các lệnh `init/deinit/start/stop` lấy cả hai khóa (TX trước, RX sau); khóa tạo một lần ở lần init đầu của cổng; kiểm tra `used` sau khi lấy khóa; `start` lỗi ở RX thì tắt lại TX; `stop` và `deinit` thử cả hai hướng, kênh đã tắt (`ESP_ERR_INVALID_STATE`) coi như đã dừng nên gọi lại được sau lỗi một phần; handle chỉ xóa khi `i2s_del_channel` thành công.
+- Sửa lỗi cũ: code phiên 2 đổi `timeout_ms` sang tick rồi truyền cho `i2s_channel_write`, trong khi driver ESP-IDF v5.4.3 nhận mili giây và tự gọi `pdMS_TO_TICKS` (đối chiếu `i2s_common.h` và `i2s_common.c` của v5.4.3). Hệ quả cũ: timeout ngắn đi 10 lần ở tick 100 Hz. Nay truyền thẳng ms. `UINT32_MAX` không còn là `portMAX_DELAY` mà thành khoảng 49 ngày (coi như chờ vô hạn).
+
+Đã kiểm chứng:
+
+- Chạy trên máy host (ASan và UBSan, `-fno-sanitize-recover`) với driver I2S, FreeRTOS semaphore giả lập: kiểm tra cấu hình, loa chỉ TX, mic chỉ RX trên cổng 1, song công (cấu hình clock và slot giống nhau ở hai kênh, đọc trong lúc ghi và ngược lại không chờ nhau), thứ tự bật tắt, lỗi khởi tạo ở từng bước không để lại kênh, `start` lỗi ở RX, `stop` và `deinit` lỗi một phần rồi thử lại, ánh xạ mã lỗi, mọi đường lỗi đều nhả khóa. 0 lỗi. 6 đột biến cố ý (quy đổi timeout lại, luôn tạo RX, đọc và ghi dùng chung khóa, bỏ dung sai kênh đã tắt, bỏ rollback TX, đặt `started` sai) đều bị test bắt. Bài test và bản giả lập nằm ngoài repo (không commit); giả lập chỉ chứng minh logic khớp mô hình do chính phiên này viết.
+- Biên dịch sạch `esp32s3_i2s.c` với `-Wall -Wextra -Wshadow -Wconversion -Wsign-conversion -Wpedantic` trên host (với header giả lập).
+
+Chưa làm hoặc chưa kiểm chứng:
+
+- **Chưa chạy `idf.py build`** (chủ dự án tự build). ESP-IDF v5.4.3 đã dựng trong sandbox nhưng phiên này không build. Header driver I2S thật chưa được dùng để biên dịch file này; chỉ đối chiếu `i2s_common.h`, `i2s_common.c`, `i2s_std.h` bằng cách đọc.
+- Chưa chạy trên phần cứng. Mic chưa xác minh loại, độ rộng mẫu, kênh trái hay phải (xem mục 4). `sx_i2s` vẫn chưa có người gọi, nên linker có thể bỏ nó.
+- Chưa kiểm chứng hành vi song công thật của driver ESP-IDF (hai kênh trên một cổng với cùng cấu hình chân) và hành vi của `i2s_del_channel` ở mọi trạng thái; chỉ dựa vào giả lập.
+- Không sửa `board.h`, `board.c`, header board mới của chủ dự án, `speaker`.
+
 ## 6. Việc đang chờ chủ dự án
 
 Đã xong và đã gỡ khỏi mục này ở phiên 7 (đối chiếu với repo ở commit `aa0d00c`): các lệnh `git mv` của `CmakeLists.txt`, `screem_app.c` và `esp32c3_time.c`; `git rm` của `sx_sdcard.h` và `esp32s3_sdcard.c`; chép đè các `CMakeLists.txt`; nối FatFs và mục đích của `libs/`. Các thay đổi CMake ở phiên 6 (`services` `REQUIRES modules utils`, `PRIV_REQUIRES libs`; `libs` trong `EXTRA_COMPONENT_DIRS`; `storage_app` trong `app`; bỏ `storage` khỏi `modules`) đã nằm trong repo.
@@ -318,6 +344,8 @@ Kế hoạch tiếp theo: xem mục 7.
 Cần chủ dự án làm:
 
 - Chạy `idf.py build` trên máy của mình sau commit `aa0d00c` (lần build đầu có `sx_time`, `screenHMI`, `touch` trên máy chủ dự án). Lưu ý đã gặp ở phiên 6: biến môi trường `IDF_TARGET=esp32` trong shell làm `set-target esp32s3` báo lệch; lệnh `idf.py set-target esp32-s3` chạy được.
+- Chạy `idf.py build` sau phiên 8 (file đổi: `sx_i2s.h`, `esp32s3_i2s.c`) và báo lỗi nếu có.
+- Cho biết loại mic (ví dụ INMP441), mức chân L/R, để chọn độ rộng mẫu và kênh khi viết module `mic` hoặc cấu hình board.
 - Cung cấp schematic V15 hoặc kết quả xác minh: chân LCD, touch, SD, I2S, RS485, loại PSRAM và dung lượng Flash, có microphone hay không (xem mục 4).
 
 Dọn tùy chọn, chờ chủ dự án duyệt (không nằm trong `SRCS`, không ảnh hưởng build):
@@ -343,6 +371,7 @@ Thứ tự đề xuất (mỗi bước phải build được trước khi sang b
 0. (Xong) Nối CMake và build.
 0a. Chủ dự án build lại trên máy sau commit `aa0d00c` (xem mục 6).
 0b. Khôi phục `board.h`, `board.c` (`board_init()`), hàm khởi động trong `app.c`, nối từ `app_main()`. Cần chủ dự án chốt tên hàm và cần schematic cho chân (giữ nhãn `chưa xác minh`).
+0c. (Phiên 8, chờ chủ dự án build) `sx_i2s` hỗ trợ RX (mic) và sửa timeout. Sau đó: khôi phục `board.h` dùng nhãn `REF/DESIGN/GIVEN` và nối header `board_device/ZX3D50CE08S-V15-USRC.h` (cần định nghĩa hoặc thay macro `GPIO_xx`), rồi module `speaker` và `mic`.
 1. (Xong ở phiên 5: build OK) `sx_pwm`, `sx_uart`, callback ngắt của `sx_gpio`.
 2. Modules: `speaker` (còn rỗng). `screenHMI` và `touch` đã viết ở phiên 6; `storage` đã viết ở phiên 6 và nằm ở `services/storage`.
 2b. `storage_app` (task duy nhất gọi `storage_*`), sau khi có `board_init()` tạo `sdcard_t`, `sdcard_config_t`, `storage_config_t`.
