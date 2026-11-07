@@ -70,7 +70,7 @@ touch FT6336U/FT5x06 I2C, microSD SPI, speaker I2S có amp onboard, RS485 onboar
 
 - Cấu hình `sdkconfig` đang commit: flash `2MB`, `CONFIG_SPIRAM` chưa bật, `CONFIG_FREERTOS_HZ=100`. Đây là giá trị đang có trong file, **không phải** thông số đã xác minh của board (phiên 7 chỉ đọc file, chưa đối chiếu phần cứng).
 
-- Mic: file `LoganSDK/board/board_device/ZX3D50CE08S-V15-USRC.h` (commit `d134462`) gán `I2S_MIC_BCLK/WS/DIN` vào `EXT_IO1/2/3` (GPIO 10, 11, 12). Đây là lựa chọn của chủ dự án, chưa có loại mic cụ thể (ví dụ INMP441 hay không), nên **chưa xác minh**: độ rộng mẫu, mức chân L/R (kênh trái hay phải), `slot_mask`. Header này chưa được include ở đâu, dùng macro `GPIO_xx` chưa định nghĩa, chưa có nhãn `REF/DESIGN/GIVEN`, và có ký tự CJK trong comment (trái `RuleCode.md`, chưa sửa vì là code của chủ dự án).
+- Mic: file `LoganSDK/board/board_device/ZX3D50CE08S-V15-USRC.h` (commit `d134462`) gán `I2S_MIC_BCLK/WS/DIN` vào `EXT_IO1/2/3` (GPIO 10, 11, 12). Đây là lựa chọn của chủ dự án. Chủ dự án chốt dùng mic INMP441, chân L/R nối xuống GND qua trở 10K do chủ dự án tự thêm (GIVEN, theo lời chủ dự án, chưa kiểm tra bằng phần cứng). Theo cách hiểu của phiên 8 từ datasheet INMP441 (chưa đối chiếu lại): L/R mức thấp cho mic ra kênh trái, khớp `slot_mask` trái của mono; mẫu 24 bit trong khung 32 bit nên cần `bits_per_sample = 32`; nguồn 1.8 đến 3.3 V, header mở rộng chỉ có +5V và GND nên cần nguồn 3.3V riêng (**chưa xác minh** cho V15). Nối dây: SCK vào GPIO 10, WS vào GPIO 11, SD (DOUT của mic) vào GPIO 12 (DIN của ESP32). Header này chưa được include ở đâu, dùng macro `GPIO_xx` chưa định nghĩa, chưa có nhãn `REF/DESIGN/GIVEN`, và có ký tự CJK trong comment (trái `RuleCode.md`, chưa sửa vì là code của chủ dự án).
 - `docs/ZX3D50CE08S-USRC-4832.md` (commit `17f1a80`) là datasheet dòng SC01 Plus; ảnh PCB trong đó ghi V13 220511, không phải V15. Nó nêu module `WT32-S3-WROVER-N16R2`, trong khi `sdkconfig` đang flash 2MB và chưa bật SPIRAM. Chưa xác minh cho V15.
 
 Cách xác minh: schematic đúng revision V15, hoặc đo thực tế, hoặc `idf.py flash monitor` để xem thông số Flash/PSRAM khi boot.
@@ -345,7 +345,7 @@ Cần chủ dự án làm:
 
 - Chạy `idf.py build` trên máy của mình sau commit `aa0d00c` (lần build đầu có `sx_time`, `screenHMI`, `touch` trên máy chủ dự án). Lưu ý đã gặp ở phiên 6: biến môi trường `IDF_TARGET=esp32` trong shell làm `set-target esp32s3` báo lệch; lệnh `idf.py set-target esp32-s3` chạy được.
 - Chạy `idf.py build` sau phiên 8 (file đổi: `sx_i2s.h`, `esp32s3_i2s.c`) và báo lỗi nếu có.
-- Cho biết loại mic (ví dụ INMP441), mức chân L/R, để chọn độ rộng mẫu và kênh khi viết module `mic` hoặc cấu hình board.
+- Xác nhận nguồn 3.3V cho INMP441 (header mở rộng không có 3.3V; chân +3.3V ở header debug ghi là chỉ tham khảo).
 - Cung cấp schematic V15 hoặc kết quả xác minh: chân LCD, touch, SD, I2S, RS485, loại PSRAM và dung lượng Flash, có microphone hay không (xem mục 4).
 
 Dọn tùy chọn, chờ chủ dự án duyệt (không nằm trong `SRCS`, không ảnh hưởng build):
