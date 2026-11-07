@@ -1,7 +1,7 @@
 # Handover - AI Learning Device
 
 > File này do mọi phiên làm việc (Claude hoặc AI khác) cập nhật ở cuối phiên. Quy tắc: xem `RuleCode.md` mục 3.
-> Cập nhật lần cuối: 2026-11-07 (phiên 8).
+> Cập nhật lần cuối: 2026-11-07 (phiên 9).
 
 ## 1. Đọc trước khi làm
 
@@ -407,3 +407,18 @@ Thứ tự đề xuất (mỗi bước phải build được trước khi sang b
   - cài Python requirements trực tiếp từ PyPI (`pip install --index-url https://pypi.org/simple -r tools/requirements/requirements.core.txt`);
   - cài `cmake==3.30.5` và `ninja` bằng pip (CMake 4.x chưa dùng cho IDF 5.4).
 - Build thử trên bản sao của repo, không `set-target` trong repo thật.
+
+### Phiên 9 (2026-11-07)
+
+Phiên này chỉ kiểm chứng, không đổi code trong repo.
+
+Đã làm:
+
+- Pull về commit `2147009` (đã có `sx_i2s` mở rộng, `inmp441`, header board và datasheet). Phiên này đã viết song song một bản mở rộng `sx_i2s` có thiết kế gần như giống hệt bản đã có trong repo, nên bản đó bị bỏ, không đưa vào repo (không có gì để trộn).
+- Chạy bộ test host của phiên này lên chính `esp32s3_i2s.c` trong repo (driver I2S và semaphore giả lập, ASan và UBSan): loa chỉ TX, mic chỉ RX trên cổng 1, song công (đọc trong lúc ghi và ngược lại không chờ nhau), thứ tự bật tắt, lỗi khởi tạo ở từng bước không để lại kênh, `start` lỗi ở RX, `stop` và `deinit` lỗi một phần rồi thử lại, timeout truyền nguyên ms, ánh xạ mã lỗi, mọi đường lỗi nhả khóa. **0 lỗi**, không cảnh báo `-Wall -Wextra -Wshadow -Wconversion -Wsign-conversion -Wpedantic`. Thử 5 đột biến cố ý trên bản của phiên này (đổi đơn vị timeout, bỏ việc coi kênh đã tắt là đã dừng, dùng chung một khóa cho đọc và ghi, quên nhả khóa, luôn tạo kênh RX), test bắt được cả 5.
+- Chạy `idf.py build` đầy đủ trên commit `2147009` trong sandbox (ESP-IDF v5.4.3, GCC 14.2.0, target esp32s3): **thành công** (rc=0), không có cảnh báo biên dịch từ code dự án. `board_hmi_ai.bin` 0x2e050 byte, còn trống 82% phân vùng app 1 MB. Kích thước không đổi so với trước vì chưa có code nào gọi `sx_i2s`, `inmp441`, `screenHMI`, `touch`, `storage`, `sx_time`, nên linker bỏ chúng. Đây là lần build đầu tiên có header driver I2S thật của ESP-IDF trong `esp32s3_i2s.c`.
+
+Chưa làm hoặc chưa kiểm chứng:
+
+- Không chạy lại test host của `inmp441` (phiên 8 đã làm), chưa chạy trên phần cứng, chưa kiểm chứng hành vi song công thật của driver ESP-IDF (chỉ có giả lập), chưa kiểm tra mic và loa chạy cùng lúc (chưa có `speaker`).
+- Các điểm lệch tài liệu, nguồn 3,3 V cho INMP441, và việc khôi phục `board.h`, `board_init()`, `app_start()` vẫn như mục 7.
