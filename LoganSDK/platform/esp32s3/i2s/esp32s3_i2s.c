@@ -159,6 +159,8 @@ int sx_i2s_init(const sx_i2s_config_t *config)
     i2s_chan_handle_t rx_channel = NULL;
     i2s_chan_config_t channel_config =
         I2S_CHANNEL_DEFAULT_CONFIG(config->port, I2S_ROLE_MASTER);
+    /* Send silence when no data is queued. Without this the driver replays the last buffers. */
+    channel_config.auto_clear_after_cb = true;
 
     int ret = map_error(i2s_new_channel(&channel_config,
                                         want_tx ? &tx_channel : NULL,

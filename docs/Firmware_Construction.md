@@ -113,7 +113,7 @@ Phase 1 hiện ở trạng thái: khung đã nối build; **chưa chạy `set-ta
 | `sx_i2c` | Có (driver I2C master mới) | Lệnh đọc/ghi không phân biệt được NACK với lỗi bus; dùng `sx_i2c_probe` |
 | `sx_spi` | Có | CS mềm qua `sx_gpio`; `timeout_ms` không có hiệu lực trên nền này |
 | `sx_i80` | Có | Chỉ mức bus và panel IO; chuỗi khởi tạo ST7796 thuộc module `screenHMI` |
-| `sx_i2s` | Có | Loa I2S TX (`dout_pin`) và mic I2S RX (`din_pin`, `sx_i2s_read`), `-1` là không dùng hướng đó; chân vẫn chưa xác minh |
+| `sx_i2s` | Có | Loa I2S TX (`dout_pin`) và mic I2S RX (`din_pin`, `sx_i2s_read`), `-1` là không dùng hướng đó; hướng phát xuất mẫu 0 khi hết dữ liệu (không lặp buffer cũ); chân vẫn chưa xác minh |
 | `sx_pwm` | Có | LEDC đèn nền; timer, channel và chân do board cung cấp |
 | `sx_uart` | Có | UART thường hoặc RS485 half-duplex; chân RS485 vẫn chưa xác minh |
 | `sx_time` | Có | `sx_delay_ms` (chờ ít nhất ms mili giây; chờ ngắn thì busy wait chính xác, chờ dài thì nhường CPU) và `sx_get_time_ms` (đếm ms từ lúc khởi động, quay vòng sau khoảng 49,7 ngày). Không gọi trong ngắt |

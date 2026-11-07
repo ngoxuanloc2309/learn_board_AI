@@ -29,6 +29,8 @@ typedef enum {
  * din_pin >= 0 creates a receive direction (microphone).
  * Set the unused one to SX_I2S_PIN_UNUSED. At least one must be used.
  * Both used on one port means full duplex: they share BCLK, WS, rate and format.
+ * While the send direction runs and no data is queued, it outputs silence (zero samples).
+ * It never repeats old data.
  * The same config must be passed to every call for that port.
  * init and deinit of one port must not run at the same time as other calls on it.
  */
@@ -68,4 +70,4 @@ int sx_i2s_read(const sx_i2s_config_t *config, void *data, size_t size,
 }
 #endif
 
-#endif
+#endif /* SX_I2S_H */
