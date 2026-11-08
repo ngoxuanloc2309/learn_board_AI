@@ -35,7 +35,7 @@ Chỉ phụ thuộc xuống dưới. Tầng dưới không include tầng trên.
 |---|---|---|
 | `main` | `app` | |
 | `app` | `board`, `modules`, `services`, `utils`, `esp32s3` | Layer thấy tất cả; `esp32s3` (thư mục `platforms/esp32s3`) có mặt để hiện thực chip được link. Tên component ESP-IDF là tên thư mục, nên đổi chip thì đổi tên này |
-| `board` | `peripherals`, `modules` | Không include `esp32s3`; chỉ dùng hợp đồng |
+| `board` | `peripherals`, `modules`, `services` | Không include `esp32s3`; chỉ dùng hợp đồng. `services` có mặt (phiên 14) để `board.c` sở hữu `storage_config_t` và `sdcard_t` (kiểu định nghĩa ở `services/storage/storage.h`); chiều phụ thuộc vẫn đi xuống |
 | `services` | `modules`, `utils`, `libs` | Gọi xuống `modules` (ví dụ `storage` dùng `sdcard`), không biết `peripherals` hay chip. `libs` chỉ dùng nội bộ (`PRIV_REQUIRES`). Thêm `esp_http_client`, `esp-tls`... khi code thật sự dùng |
 | `modules` | `peripherals`, `utils` | Nhận cấu hình qua tham số, không include `board.h`. `sdcard` chỉ dùng `sx_spi` |
 | `esp32s3` (`platforms/esp32s3`) | `peripherals`; PRIV: `driver`, `esp_lcd` | **Layer duy nhất được include header driver ESP-IDF** |

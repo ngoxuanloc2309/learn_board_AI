@@ -1,7 +1,7 @@
 # Handover - AI Learning Device
 
 > File này do mọi phiên làm việc (Claude hoặc AI khác) cập nhật ở cuối phiên. Quy tắc: xem `RuleCode.md` mục 3.
-> Cập nhật lần cuối: 2026-11-08 (phiên 13).
+> Cập nhật lần cuối: 2026-11-08 (phiên 14).
 
 ## 1. Đọc trước khi làm
 
@@ -25,7 +25,7 @@
 |---|---|
 | Khung project ESP-IDF, CMake nối các layer | Xong ở phiên 3: **đã build thành công** trong sandbox (ESP-IDF v5.4.3, target esp32s3, 0 cảnh báo). Phiên 1 ghi đã build nhưng repo thật lúc đó chưa có các file CMake này |
 | Phase 1 trên máy của chủ dự án | Phiên 6: chủ dự án đã `set-target` và `idf.py build` thành công (trước khi có `sx_time`). **Chưa flash.** Chưa build lại trên máy chủ dự án sau commit `aa0d00c` (phiên 7) |
-| `board.h` (chân, số cổng) | **Chỉ là stub** (enum `BoardType_t`), chưa có chân nào, chưa có nhãn `REF/DESIGN/GIVEN` hay `BOARD_PINMAP_VERIFIED`. Phiên 1 mô tả đầy đủ hơn nhưng nội dung đó không có trong repo |
+| `board.h`, `board.c` (`board_init()`, chân, instance thiết bị) | Phiên 14: `board.h` khai báo chân bằng số nguyên có nhãn `REF/DESIGN/GIVEN` và `BOARD_PINMAP_VERIFIED = 0` (không include header `board_device`). `board.c` sở hữu instance tĩnh (`screen_hmi_t`, `touch_t`, `speaker_t`, `inmp441_t`, `sdcard_t`) và các cấu hình `const` của chúng, kèm `storage_config_t` (`format_if_mount_failed = false`). API: `board_init()` (chỉ đặt cờ, không chạm phần cứng), `board_init_screen/touch/speaker/mic/storage()` (mỗi hàm một thiết bị, chưa ai gọi), `board_get_screen/touch/speaker/mic()` (NULL tới khi init thành công). `board_init_touch()` trả `BOARD_ERR_STATE` khi màn hình chưa init vì reset GPIO4 dùng chung và do màn hình lái. `board/CMakeLists.txt` thêm `services` vào `REQUIRES`. **Đã biên dịch thử trên máy host** (gcc 13.3, `-fsyntax-only` với `-Wall -Wextra -Wshadow -Wconversion -Wsign-conversion -Wpedantic -Wmissing-prototypes -Wstrict-prototypes -Werror`, sạch) và **đã chạy logic trên host** với module giả lập (ASan, UBSan, trạng thái, thứ tự phụ thuộc, nội dung cấu hình, không trùng GPIO, 13 đột biến đã thử; 2 đột biến đầu sống sót vì thiếu ca test (speaker init lỗi, đảo màu), đã bổ sung test rồi tất cả bị bắt). **Chưa `idf.py build`, chưa biên dịch bằng GCC cho ESP32-S3, chưa chạy trên phần cứng.** Các giá trị `DESIGN` xem mục 4 |
 | Peripheral `sx_gpio`, `sx_i2c`, `sx_spi`, `sx_i80`, `sx_i2s` | Hợp đồng và hiện thực ESP32-S3 đã viết, **đã compile trong build đầy đủ (phiên 3), chưa chạy trên phần cứng**. Chưa kiểm chứng link vào firmware vì chưa có code nào gọi chúng |
 | Peripheral `sx_pwm`, `sx_uart`, ngắt của `sx_gpio` | Viết ở phiên 4. Phiên 5: sửa lỗi compile ở `esp32s3_gpio.c`, **build đầy đủ thành công (0 cảnh báo)**; chưa chạy trên phần cứng |
 | Peripheral `sx_time` | Phiên 6: `sx_delay_ms`, `sx_get_time_ms` (`sx_time.h` và `platform/esp32s3/time/esp32s3_time.c`). Đã chạy trên máy host (giả lập FreeRTOS, `esp_timer`) và đã build đầy đủ trong sandbox. Phiên 7: chủ dự án đã đổi tên `esp32c3_time.c` thành `esp32s3_time.c` và push (commit `aa0d00c`), khớp với `platform/esp32s3/CMakeLists.txt`. Chưa chạy trên phần cứng, chưa có ai gọi |
@@ -40,7 +40,7 @@
 | Service `AI` (`AI_backend`, `AI_frontend`) | Chỉ là file rỗng. Chủ dự án để phần backend AI lại sau (chưa có đặc tả backend: URL, endpoint, JSON, xác thực) |
 | Service `storage` (`services/storage`) | Phiên 6: API file trên thẻ SD (mount, open/read/write/seek, list, mkdir, remove, rename, đọc/ghi cả file), nối FatFs vào `sdcard` qua `storage_diskio.c`. **Đã chạy trên máy host** (FatFs thật, thẻ SD giả lập bằng RAM, ASan và UBSan, 0 lỗi) và biên dịch sạch với `-Wall -Wextra -Wshadow -Wconversion -Wsign-conversion -Wpedantic`. Chủ dự án đã chạy `idf.py build` thành công cho esp32s3 (phiên 6). Chưa thử với thẻ thật, chưa chạy trên phần cứng. Lưu ý: `app_init()` chưa được ai gọi nên linker có thể bỏ code storage, kích thước bin chưa phản ánh chi phí thật của FatFs Chưa có `board_init()` nên chưa có code gọi `storage_init` |
 | `libs/` (FatFs R0.16 của ChaN, cJSON) | Phiên 6: `libs/CMakeLists.txt` đăng ký component `libs` chỉ build FatFs (`ff.c`, `ffsystem.c`, `ffunicode.c`). cJSON nằm trong thư mục nhưng **chưa build**. Không dùng component `fatfs` của ESP-IDF |
-| App tasks | `app_start()` có (gọi `wifi_app_start()`), `app_main()` gọi `app_start()`. `wifi_app` chạy trên phần cứng ở mức Wi-Fi (xem dòng `sx_wifi`), phiên 12 thêm quét chẩn đoán vào `wifi_app`. Phiên 13 thêm `http_app` (task chờ IP rồi gửi một GET thử, chưa build). Các app khác (`AI_app`, `ntp_app`, `screen_app`, `speaker_app`, `storage_app`) vẫn là file rỗng hoặc chỉ có header. `board_init()` **chưa tồn tại** |
+| App tasks | `app_start()` có (gọi `wifi_app_start()`), `app_main()` gọi `app_start()`. `wifi_app` chạy trên phần cứng ở mức Wi-Fi (xem dòng `sx_wifi`), phiên 12 thêm quét chẩn đoán vào `wifi_app`. Phiên 13 thêm `http_app` (task chờ IP rồi gửi một GET thử, chưa build). Các app khác (`AI_app`, `ntp_app`, `screen_app`, `speaker_app`, `storage_app`) vẫn là file rỗng hoặc chỉ có header. `board_init()` có từ phiên 14 nhưng `app_start()` **chưa gọi** nó (theo quyết định của chủ dự án) |
 | LVGL, OTA | Chưa bắt đầu |
 
 ### Kiến trúc (tóm tắt, chi tiết ở Firmware_Construction.md)
@@ -77,6 +77,8 @@ touch FT6336U/FT5x06 I2C, microSD SPI, speaker I2S có amp onboard, RS485 onboar
 - `docs/ZX3D50CE08S-USRC-4832.md` (commit `17f1a80`) là datasheet dòng SC01 Plus; ảnh PCB trong đó ghi V13 220511, không phải V15. Nó nêu module `WT32-S3-WROVER-N16R2`, trong khi `sdkconfig` đang flash 2MB và chưa bật SPIRAM. Chưa xác minh cho V15.
 
 Thông tin mạng do chủ dự án cung cấp ở phiên 12 (GIVEN, lấy từ trang thông tin adapter Wi-Fi của laptop Windows, không đo trực tiếp bằng board): router SSID `Log Terminal`, băng 2.4 GHz kênh 11, chuẩn 802.11n, bảo mật WPA2-Personal, mạng `192.168.30.0/24` (gateway `192.168.30.1`), không trùng dải AP `192.168.4.0/24`. Chủ dự án báo thấy mạng `LEARN_BOARD_2309` của board (thiết bị nào thấy thì chưa hỏi), nên phía phát của radio có vẻ chạy. Phần thu hoạt động: quét thấy 22 mạng. SSID thật của router có **dấu cách ở cuối** (`Log Terminal `), nhận biết từ log quét của board (laptop Windows không hiển thị dấu cách này). Quét cũng cho thấy router báo `wpa/wpa2` (chế độ hỗn hợp) và nhiều mạng lân cận trên kênh 1, 4, 5, 6, 11, 13.
+
+Giá trị trong `board.h` do phiên 14 chọn, nhãn `DESIGN` (không có nguồn, chưa xác minh, chỉnh khi bring-up): xung ghi LCD `pclk_hz` 10 MHz; `max_transfer_bytes` 30720; `queue_depth` 1; `swap_color_bytes` true; MADCTL `MV | BGR` (0x28); không đảo màu; không có bảng lệnh panel; backlight LEDC timer 0, channel 0, 5 kHz, 8 bit, active high (duty 0 lúc init, nên **màn hình tối tới khi gọi `screen_hmi_set_backlight`**); touch I2C port 0, 100 kHz, không bật pull-up trong chip, `swap_xy` true, không mirror; SD dùng SPI host 1 (`SPI2_HOST`, đã đối chiếu `spi_types.h` v5.4.3), 10 MHz; speaker I2S port 0, mic I2S port 1, tốc độ lấy mẫu 16000 Hz. Chân LCD, touch, SD, loa vẫn nhãn `REF`; chân mic nhãn `GIVEN`. Ngoài ra: chân CS của LCD giả định nối đất (tham chiếu không có chân CS); chân `TE` (GPIO 48) và `TP_INT` (GPIO 7) chưa dùng nên chưa khai báo; RS485 chưa khai báo vì chưa có nguồn xác minh. Header `board_device/ZX3D50CE08S-V15-USRC.h` còn một ký tự không phải ASCII ở dòng 75 (comment, dấu ngoặc toàn góc), chưa sửa vì là code của chủ dự án.
 
 Cách xác minh: schematic đúng revision V15, hoặc đo thực tế, hoặc `idf.py flash monitor` để xem thông số Flash/PSRAM khi boot.
 
@@ -368,6 +370,9 @@ Chưa làm hoặc chưa kiểm chứng:
 
 Cần chủ dự án làm:
 
+- Build sau phiên 14 (file đổi: `LoganSDK/board/board.h`, `board.c`, `CMakeLists.txt`, `docs/Firmware_Construction.md`, `docs/HandOver.md`) và gửi log. Điểm cần xem: có cảnh báo hay lỗi nào ở `board.c`; `board` thêm `REQUIRES services` có tạo vòng phụ thuộc component không (kỳ vọng không, `services` không `REQUIRES board`); kích thước bin so với 0xb61f0 của phiên 13 (kỳ vọng gần như không đổi vì `app` chưa gọi hàm nào của `board`, linker có thể bỏ `board.o`).
+- Bring-up từng thiết bị (việc sau, khi bạn muốn): gọi `board_init()` rồi `board_init_screen()`, thử `screen_hmi_set_backlight` và `screen_hmi_fill_rect` với vài màu đã biết để kiểm tra hướng, thứ tự RGB/BGR, đảo màu và `pclk_hz`; sau đó `board_init_touch()`. Khi một giá trị `DESIGN` sai, sửa macro tương ứng trong `board.h`. Cần cho tôi biết chọn thiết bị nào làm trước và gửi log.
+- Chân GPIO 0, 3, 45, 46 (strapping) đang bị LCD dùng; nếu board không boot đúng sau khi `board_init_screen()` chạy, báo ngay kèm log boot.
 - Build sau việc `http_app` ở cuối phiên 13 (file đổi: `app/app.c`, `app/app.h`, `app/user/http_app/http_app.h`, `http_app.c`), flash, gửi log dòng `[http] ...`. Kết quả `result=-2 (net)` có thể do router không ra được Internet hoặc DNS lỗi; driver không phân biệt được. Kiểm tra bằng cách cho laptop nối cùng mạng `Log Terminal` thử mở `https://example.com`.
 - (Build phiên 13 đã xong, xem nhật ký.) Chạy lại `idf.py build` sau bản sửa cảnh báo ở `wifi_app.c` (cuối phiên 13), rồi flash và lặp lại thử rút router 20 giây: kỳ vọng sau khi nối lại dòng trạng thái hiện `reason=0` khi `got_ip`, và `clients=` bằng số thiết bị thật đang nối vào AP (kể cả sau lần AP kick client bằng `reason=209`).
 - Chạy `idf.py build` trên máy của mình sau commit `aa0d00c` (lần build đầu có `sx_time`, `screenHMI`, `touch` trên máy chủ dự án). Lưu ý đã gặp ở phiên 6: biến môi trường `IDF_TARGET=esp32` trong shell làm `set-target esp32s3` báo lệch; lệnh `idf.py set-target esp32-s3` chạy được.
@@ -393,12 +398,12 @@ Quyết định còn mở (thêm ở phiên 11):
 - Nếu `idf.py build` báo vượt phân vùng app 1 MB: cần chủ dự án quyết định đổi partition (phiên 11 không tự đổi).
 - CA bundle đang là `CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y` (đọc từ `sdkconfig`), tốn flash. Có thể đổi sang bộ nhỏ hơn hoặc chỉ dùng PEM của backend (`ca_cert_pem`) nếu cần tiết kiệm; chưa đo.
 
-Quyết định còn mở (thêm ở phiên 10, chờ chủ dự án trả lời trước khi khôi phục `board.h`):
+Quyết định thêm ở phiên 10 (phiên 14: bốn điểm dưới đã chốt, xem từng dòng; điểm còn mở là `app_start()` có gọi `app_init()` hay không và loại `service` tiếp theo):
 
 - `app_start()` có gọi `app_init()` khi năm hàm `*_init` của app còn chưa có thân hàm không (đề xuất: chưa gọi, không động vào các file rỗng; hoặc thêm stub).
-- Thêm `services` vào `REQUIRES` của `board` để `board.c` sở hữu `storage_config_t` (hợp lệ theo sơ đồ layer, khác bảng ở `Firmware_Construction.md` mục 2, sẽ phải cập nhật bảng), hay để `storage_app` sở hữu.
-- `board.h` tự khai báo số chân có nhãn `REF/DESIGN/GIVEN` và không include header `board_device` của chủ dự án (đề xuất), hay sửa header đó để dùng.
-- Giá trị chưa có nguồn xác minh khi viết cấu hình board: `pclk_hz`, MADCTL, đảo màu, bảng lệnh panel, hướng touch, LEDC timer và channel, SPI host, I2C port. Đề xuất giá trị bảo thủ nhãn `DESIGN`, hoặc tra cấu hình công khai của WT32-SC01 Plus làm nhãn `REF`.
+- (Đã chốt phiên 14: phương án A) Thêm `services` vào `REQUIRES` của `board` để `board.c` sở hữu `storage_config_t`. Bảng ở `Firmware_Construction.md` mục 2 đã sửa. Cũ: hay để `storage_app` sở hữu.
+- (Đã chốt phiên 14) `board.h` tự khai báo số chân có nhãn `REF/DESIGN/GIVEN` và không include header `board_device`.
+- (Đã áp phiên 14, theo mặc định tôi nêu và chủ dự án không phản đối) Giá trị chưa có nguồn xác minh (`pclk_hz`, MADCTL, đảo màu, hướng touch, LEDC timer và channel, SPI host, I2C port) dùng giá trị bảo thủ nhãn `DESIGN` (danh sách ở mục 4). Bảng lệnh panel **không viết** (chưa có nguồn): màn hình chạy với thiết lập mặc định của chip, có thể sai gamma, nguồn hoặc màu cho tới khi có nguồn đã xác minh.
 - Loại `service` cần viết sau `speaker` (xem mục 7).
 
 Quyết định còn mở (cũ):
@@ -417,12 +422,12 @@ Thứ tự đề xuất (mỗi bước phải build được trước khi sang b
 
 0. (Xong) Nối CMake và build.
 0a. Chủ dự án build lại trên máy sau commit `aa0d00c` (xem mục 6).
-0b. (Phiên 13: chủ dự án nói đã định nghĩa chân trong `board_device/ZX3D50CE08S-V15-USRC.h`, nên việc này **không bị chặn** bởi schematic; còn thiếu phần nối chân vào code, xem nhật ký phiên 13.) Khôi phục `board.h`, `board.c` (`board_init()`), hàm khởi động trong `app.c`, nối từ `app_main()`. Cần chủ dự án chốt tên hàm và cần schematic cho chân (giữ nhãn `chưa xác minh`).
-0c. (Phiên 8, chờ chủ dự án build) `sx_i2s` hỗ trợ RX (mic) và sửa timeout. Sau đó: khôi phục `board.h` dùng nhãn `REF/DESIGN/GIVEN` và nối header `board_device/ZX3D50CE08S-V15-USRC.h` (cần định nghĩa hoặc thay macro `GPIO_xx`), rồi module `speaker` và cấu hình `inmp441` trong `board_init()`.
+0b. (Phiên 14: đã viết `board.h`, `board.c`, `board_init()` và `board_init_xxx` từng thiết bị, chờ build của chủ dự án.) Còn lại: `app_start()` chưa gọi `board_init()` (quyết định của chủ dự án, để bring-up từng thiết bị); chưa có schematic V15 nên mọi chân vẫn `REF`, `BOARD_PINMAP_VERIFIED = 0`.
+0c. (Phiên 8, chờ chủ dự án build) `sx_i2s` hỗ trợ RX (mic) và sửa timeout. Phần `board.h` và cấu hình `speaker`, `inmp441` ở `board.c` đã làm ở phiên 14 (không nối header `board_device`, khai báo số chân trực tiếp).
 1. (Xong ở phiên 5: build OK) `sx_pwm`, `sx_uart`, callback ngắt của `sx_gpio`.
 2. Modules: `speaker` đã viết ở phiên 10 (chờ build của chủ dự án). `screenHMI` và `touch` đã viết ở phiên 6; `storage` đã viết ở phiên 6 và nằm ở `services/storage`.
 2a. Theo chỉ đạo của chủ dự án (phiên 10): sau `speaker` là viết phần service, rồi mới viết app. Chưa chốt service nào (xem mục 6). `board.h`, `board_init()`, `app_start()` vẫn cần có trước khi bất kỳ instance nào (speaker, mic, màn hình, touch, SD) được tạo và chạy.
-2b. `storage_app` (task duy nhất gọi `storage_*`), sau khi có `board_init()` tạo `sdcard_t`, `sdcard_config_t`, `storage_config_t`.
+2b. `storage_app` (task duy nhất gọi `storage_*`). Phiên 14: `board.c` đã có `sdcard_t`, `sdcard_config_t`, `storage_config_t` và `board_init_storage()`; `storage_app` cần gọi `storage_mount()` (chạy trong task riêng, có thể chặn vài giây khi không có thẻ).
 3. Bring-up trên phần cứng (chủ dự án chạy build và flash): xác minh Flash/PSRAM, chân, LCD hiển thị, touch đọc được, SD mount, speaker ra tiếng, thử mic.
 4. Wi-Fi (`sx_wifi`) và `services/http` đã viết ở phiên 11 (chờ build của chủ dự án). Còn lại: LVGL (flush callback, đọc input từ touch), OTA, và phần AI (chờ đặc tả backend). Sau đó theo roadmap trong `Product_Construction.md`.
 4b. (Phiên 12: nguyên nhân `reason=201` đã rõ. Phiên 13: thử rút router 20 giây xong, tự nối lại đạt; quét lặp đã tắt.) Còn lại cho Wi-Fi: chủ dự án build và thử lại hai sửa của phiên 13; thử router WPA3 nếu có điều kiện; sau đó sang bước tiếp theo của roadmap (xem 0b, 2a, 4a).
@@ -657,3 +662,43 @@ Chưa làm hoặc chưa kiểm chứng:
 - `example.com` có trả `Content-Length` hoặc chunked không là điều chưa xác minh; nếu không, `http_svc_perform` báo `HTTP_SVC_ERR_NET` (cố ý, xem `http.h`). Chưa biết router `Log Terminal` có ra Internet không.
 - Chưa có thử HTTP thường, thử redirect, thử chứng chỉ sai, thử mất Wi-Fi giữa lúc đang gọi.
 - Chỉ gọi một lần sau khi có IP: nếu mất Wi-Fi rồi nối lại thì không gọi lại; chưa đo rò rỉ heap qua nhiều lần gọi.
+
+### Phiên 14 (2026-11-08)
+
+Đầu phiên: clone repo (HEAD `c0d663b`), đọc `HandOver.md`, `RuleCode.md`, `RuleAgent.md`, `Firmware_Construction.md` và đầu `Product_Construction.md`, đối chiếu repo. Nhiệm vụ: bước 0b (`board.h`, `board.c`, `board_init()`). Theo yêu cầu phiên này: chỉ kiểm tra logic rồi present file, chủ dự án tự build.
+
+Lệch phát hiện khi đối chiếu: tên file docs thật là `HandOver.md`, `RuleCode.md` (không phải chữ thường như prompt ghi); thư mục chip là `platform/esp32s3` (số ít) trong khi `Firmware_Construction.md` ghi `platforms/` (đã ghi từ trước, chưa sửa). Repo khớp handover ở các điểm còn lại: `http_app` đã có, `app_start()` gọi `wifi_app_start()` rồi `http_app_start()`, `board.h` còn là stub, `board.c` chỉ có `#include`, `ZX3D50CE08S-V15-USRC.c` rỗng, header `board_device` không ai include và dùng macro `GPIO_xx` chưa định nghĩa. Chưa có log build và log chạy của `http_app`.
+
+Quyết định đã chốt với chủ dự án đầu phiên:
+
+1. `board.h` tự khai báo số chân bằng số nguyên với nhãn `REF/DESIGN/GIVEN`, không include và không sửa header `board_device`.
+2. `board_init()` chỉ chuẩn bị cấu hình, không init phần cứng; `app_start()` chưa gọi nó.
+3. Phương án A: `board` có `REQUIRES services` để `board.c` giữ `storage_config_t` (hợp lệ theo sơ đồ layer vì `board` ở L4 gọi xuống L3).
+4. Giá trị chưa có nguồn dùng mặc định bảo thủ nhãn `DESIGN` (tôi nêu mặc định, chủ dự án không phản đối); không đổi `sdkconfig`.
+
+Đã làm (present từng file, đường dẫn trong repo):
+
+- `LoganSDK/board/board.h` (sửa, giữ nguyên enum `BoardType_t` của chủ dự án): macro chân và giá trị cấu hình có nhãn, `BOARD_PINMAP_VERIFIED = 0`, mã trả về `BOARD_OK` và `BOARD_ERR_STATE` (-100, các mã âm khác là mã của module lỗi, giữ nguyên), khai báo `board_init`, `board_init_screen/touch/speaker/mic/storage`, `board_get_screen/touch/speaker/mic`.
+- `LoganSDK/board/board.c` (sửa, trước đó chỉ có `#include`): instance tĩnh, cấu hình `const` cho LCD (bus I80 8 bit, reset, backlight PWM), touch (I2C, reset dùng chung nên `reset = NULL`), thẻ SD (SPI host 1, CS mềm, dummy 0xFF, mode 0), `storage_config_t` (không format thẻ), speaker (I2S port 0), mic (I2S port 1); các hàm init và getter. `board_init_touch()` trả `BOARD_ERR_STATE` nếu màn hình chưa init. Khi init một thiết bị lỗi, cờ giữ false và lỗi của module được trả nguyên, nên có thể gọi lại.
+- `LoganSDK/board/CMakeLists.txt` (sửa): `REQUIRES peripherals modules services`, cập nhật comment.
+- `docs/Firmware_Construction.md` (sửa một dòng): bảng mục 2, dòng `board` thêm `services`.
+- `docs/HandOver.md` (sửa): bản này.
+- Không sửa `app.c` (không gọi `board_init`), `sdkconfig`, `ZX3D50CE08S-V15-USRC.h`, các module, `libs`. Không thêm dependency ngoài `services` đã nêu.
+
+Đã kiểm chứng:
+
+- Đọc header ESP-IDF v5.4.3 (tải từ github): `spi_types.h` có `SPI2_HOST=1`, `SPI3_HOST=2`; `soc_caps.h` của ESP32-S3 có `SOC_I2C_NUM=2`, `SOC_I2S_NUM=2`, `SOC_LEDC_TIMER_NUM=4`, `SOC_LEDC_CHANNEL_NUM=8`. Đọc code platform trong repo: `esp32s3_spi.c` chỉ nhận host từ `SPI2_HOST` trở lên; `esp32s3_i80.c` bắt buộc `pclk_hz`, `max_transfer_bytes`, `queue_depth` khác 0 và chỉ đọc `bus_width` chân dữ liệu đầu; `screenHMI.c` cần `max_transfer_bytes` đủ cho một hàng (480 x 2 byte).
+- Biên dịch thử trên máy host (gcc 13.3, **không phải** GCC cho ESP32-S3, **không phải** `idf.py build`): `board.c` chạy `-fsyntax-only` với `-Wall -Wextra -Wshadow -Wconversion -Wsign-conversion -Wpedantic -Wmissing-prototypes -Wstrict-prototypes -Werror`, sạch. `board.h` include riêng được, cả từ C++.
+- Chạy `board.c` thật trên host (ASan, UBSan) với module giả lập: trước `board_init` mọi init trả `BOARD_ERR_STATE` và không chạm thiết bị; `board_init` không gọi thiết bị nào; touch bị từ chối khi màn hình chưa up; lỗi module được trả nguyên và cờ không lên; gọi lại sau lỗi chạy được; gọi hai lần bị từ chối; getter trả NULL tới khi init thành công; nội dung cấu hình khớp macro (thứ tự chân dữ liệu, CS LCD = -1, backlight duty 0, MADCTL 0x28, touch `reset = NULL`, SD dummy 0xFF mode 0 CS 41, `format_if_mount_failed = false`, I2S hai port khác nhau); không có GPIO nào bị dùng hai lần trong 24 chân đã khai báo. 13 đột biến đã thử: 2 đột biến đầu (cờ lên khi speaker init lỗi, đảo màu) sống sót vì thiếu ca test, đã bổ sung test và tất cả bị bắt. Giả lập chỉ chứng minh logic của `board.c`, không chứng minh module hay phần cứng.
+- Kiểm tra bằng lệnh: `board.h`, `board.c`, `CMakeLists.txt` của board chỉ có ASCII; không có ký tự trang trí hay thẻ ngoặc vuông trong comment.
+
+Chưa làm hoặc chưa kiểm chứng:
+
+- **Không chạy `idf.py build`, không biên dịch bằng GCC cho ESP32-S3, không chạy trên phần cứng.** Chưa biết `board` thêm `REQUIRES services` có gây vấn đề ở cấu hình CMake của ESP-IDF không (không có vòng phụ thuộc theo `CMakeLists.txt` hiện tại, chưa xác minh bằng build).
+- Mọi giá trị `DESIGN` (mục 4) chưa kiểm chứng, đặc biệt: `pclk_hz` 10 MHz, MADCTL, đảo màu, `swap_xy` của touch, không bật pull-up I2C, SPI host và xung của SD. Chân vẫn `REF`, `BOARD_PINMAP_VERIFIED = 0`. Trình tự reset chung LCD/touch ở GPIO4 chưa xác minh.
+- Chưa đo RAM tĩnh thêm do instance trong `board.c` (`screen_hmi_t` riêng đã có buffer fill 1920 pixel, khoảng 3.8 KB), chưa biết `max_transfer_bytes` 30720 có làm driver I80 cấp thêm RAM DMA nhiều không (chưa đọc kỹ code ESP-IDF phần này). Vì `app` chưa gọi hàm nào của `board`, bin có thể không đổi (chưa kiểm).
+- `board_init_screen()` để backlight tắt: màn hình sẽ tối cho tới khi gọi `screen_hmi_set_backlight`. Chưa có app nào gọi.
+- Chưa có app nào gọi `board_init_xxx`; `storage_app`, `screen_app`, `speaker_app` vẫn rỗng. Không có ai gọi `storage_mount`.
+- Việc cũ vẫn chờ: log build và chạy của `http_app` (phiên 13), build của các phiên 8 đến 11 còn lại nếu chưa gửi log.
+
+Kế hoạch tiếp theo: xem mục 6 và mục 7. Gợi ý thứ tự: (1) chủ dự án build và gửi log phiên 14; (2) gửi log `[http] ...` để chốt `http_app`; (3) bring-up màn hình qua `board_init_screen()` và `screen_hmi_fill_rect`, từng thiết bị một, mỗi bước build trước khi sang bước sau.
