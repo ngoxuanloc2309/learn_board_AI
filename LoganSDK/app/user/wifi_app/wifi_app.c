@@ -61,6 +61,9 @@ static void wifi_task(void *arg)
         return;
     }
     printf("[wifi] started, AP %s on %s\n", DEFAULT_AP_SSID, DEFAULT_STATIC_IP);
+    /* Helps to spot a typo or a hidden space in the settings. The password itself is never printed. */
+    printf("[wifi] sta ssid=\"%s\" (%u chars), password %u chars\n", DEFAULT_WIFI_SSID,
+           (unsigned)strlen(DEFAULT_WIFI_SSID), (unsigned)strlen(DEFAULT_WIFI_PASSWORD));
 
     for (;;) {
         if (sx_wifi_get_status(&status) == SX_WIFI_OK) {
