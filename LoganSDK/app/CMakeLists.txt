@@ -2,7 +2,6 @@
 # esp32s3 (LoganSDK/platform/esp32s3) is listed so that the chip implementation is linked into the firmware.
 # The component name is the directory name. To use another chip, replace this name.
 idf_component_register(SRCS "app.c"
-                            "app_start.c"
                             "user/AI_app/AI_app.c"
                             "user/http_app/http_app.c"
                             "user/ntp_app/ntp_app.c"
