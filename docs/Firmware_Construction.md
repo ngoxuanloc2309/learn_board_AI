@@ -117,7 +117,7 @@ Phase 1 hiện ở trạng thái: khung đã nối build; **chưa chạy `set-ta
 | `sx_pwm` | Có | LEDC đèn nền; timer, channel và chân do board cung cấp |
 | `sx_uart` | Có | UART thường hoặc RS485 half-duplex; chân RS485 vẫn chưa xác minh |
 | `sx_time` | Có | `sx_delay_ms` (chờ ít nhất ms mili giây; chờ ngắn thì busy wait chính xác, chờ dài thì nhường CPU) và `sx_get_time_ms` (đếm ms từ lúc khởi động, quay vòng sau khoảng 49,7 ngày). Không gọi trong ngắt |
-| `sx_wifi` | Có (phiên 11) | STA, AP hoặc APSTA cùng lúc. AP IP tĩnh do config đặt (mặc định chốt `192.168.4.1`), STA dùng DHCP. Kênh AP theo router khi STA đã nối. `sx_wifi_scan` (phiên 12) quét mạng để chẩn đoán, tạm hủy lần nối đang chạy. Đã chạy trên phần cứng (phiên 12): AP lên, STA nối router WPA2 và nhận IP qua DHCP, quét trả kết quả đúng. Client (điện thoại) nối vào AP và nhận IP từ DHCP của board. Chưa thử: tự nối lại sau khi mất kết nối, router WPA3. Người gọi: `wifi_app` |
+| `sx_wifi` | Có (phiên 11) | STA, AP hoặc APSTA cùng lúc. AP IP tĩnh do config đặt (mặc định chốt `192.168.4.1`), STA dùng DHCP. Kênh AP theo router khi STA đã nối. `sx_wifi_scan` (phiên 12) quét mạng để chẩn đoán, tạm hủy lần nối đang chạy. Đã chạy trên phần cứng (phiên 12): AP lên, STA nối router WPA2 và nhận IP qua DHCP, quét trả kết quả đúng. Client (điện thoại) nối vào AP và nhận IP từ DHCP của board. Phiên 13: thử rút router 20 giây, tự nối lại đạt (router lên kênh khác, AP theo). `ap_clients` đọc từ driver, `sta_last_reason` về 0 khi có IP (sửa chưa build). Chưa thử: router WPA3. Người gọi: `wifi_app` |
 
 Các hợp đồng trên đã được nối vào component CMake và đã build thành công trong sandbox (phiên 5, ESP-IDF v5.4.3, target esp32s3).
 **Chưa chạy trên phần cứng.**

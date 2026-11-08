@@ -25,12 +25,12 @@
 
 /*
  * Diagnosis scan. One scan runs right after the start, then another one every
- * APP_WIFI_SCAN_PERIOD_MS while STA has no IP. Set it to 0 to scan only once.
+ * APP_WIFI_SCAN_PERIOD_MS while STA has no IP. 0 (the default since session 13) scans only once.
  * A scan cancels the running connect attempt for about 2 seconds, so turn the repeats off
  * when the cause of a connection problem is known. Chosen by design, not measured.
  */
 #ifndef APP_WIFI_SCAN_PERIOD_MS
-#define APP_WIFI_SCAN_PERIOD_MS 30000U
+#define APP_WIFI_SCAN_PERIOD_MS 0U
 #endif
 
 /*

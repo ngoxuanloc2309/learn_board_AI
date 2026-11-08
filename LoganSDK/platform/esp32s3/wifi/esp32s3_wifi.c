@@ -48,7 +48,6 @@ typedef struct {
     sx_wifi_sta_state_t sta_state;
     char sta_ip[SX_WIFI_IP_STR_LEN];
     uint8_t last_reason;
-    uint8_t ap_clients;
 } wifi_state_t;
 
 static wifi_state_t s_state;
@@ -326,6 +325,8 @@ static void handle_got_ip(const ip_event_got_ip_t *info)
     portENTER_CRITICAL(&s_lock);
     s_state.sta_state = SX_WIFI_STA_GOT_IP;
     memcpy(s_state.sta_ip, text, sizeof(text));
+    /* A working link means the old disconnect reason no longer describes the state. */
+    s_state.last_reason = 0U;
     portEXIT_CRITICAL(&s_lock);
     (void)xEventGroupSetBits(s_group, GOT_IP_BIT);
 
@@ -334,16 +335,7 @@ static void handle_got_ip(const ip_event_got_ip_t *info)
 
 static void handle_ap_client(bool joined)
 {
-    portENTER_CRITICAL(&s_lock);
-    if (joined) {
-        if (s_state.ap_clients < UINT8_MAX) {
-            s_state.ap_clients++;
-        }
-    } else if (s_state.ap_clients > 0U) {
-        s_state.ap_clients--;
-    }
-    portEXIT_CRITICAL(&s_lock);
-
+    /* The client count is not kept here. sx_wifi_get_status asks the driver for the real number. */
     notify(joined ? SX_WIFI_EVENT_AP_CLIENT_JOINED : SX_WIFI_EVENT_AP_CLIENT_LEFT);
 }
 
@@ -379,9 +371,6 @@ static void event_handler(void *arg, esp_event_base_t base, int32_t id, void *da
             handle_ap_client(false);
             break;
         case WIFI_EVENT_AP_STOP:
-            portENTER_CRITICAL(&s_lock);
-            s_state.ap_clients = 0U;
-            portEXIT_CRITICAL(&s_lock);
             break;
         default:
             break;
@@ -609,7 +598,6 @@ int sx_wifi_start(void)
     portENTER_CRITICAL(&s_lock);
     s_state.sta_state = SX_WIFI_STA_STOPPED;
     s_state.sta_ip[0] = '\0';
-    s_state.ap_clients = 0U;
     portEXIT_CRITICAL(&s_lock);
     (void)xEventGroupClearBits(s_group, GOT_IP_BIT);
 
@@ -647,7 +635,6 @@ int sx_wifi_stop(void)
     portENTER_CRITICAL(&s_lock);
     s_state.sta_state = SX_WIFI_STA_STOPPED;
     s_state.sta_ip[0] = '\0';
-    s_state.ap_clients = 0U;
     portEXIT_CRITICAL(&s_lock);
     (void)xEventGroupClearBits(s_group, GOT_IP_BIT);
 
@@ -681,6 +668,30 @@ int sx_wifi_wait_ip(uint32_t timeout_ms)
     return ((bits & GOT_IP_BIT) != 0U) ? SX_WIFI_OK : SX_WIFI_ERR_TIMEOUT;
 }
 
+/*
+ * Asks the driver how many stations are joined to the AP right now. Counting join and leave
+ * events drifted after an SA Query timeout, so the number is read from the driver every time.
+ * The list is about 250 bytes on the stack. Returns 0 when there is no AP or it is not running.
+ */
+static uint8_t count_ap_clients(void)
+{
+    wifi_sta_list_t list;
+
+    if (!s_state.running || !mode_has_ap(s_state.mode)) {
+        return 0U;
+    }
+    if (esp_wifi_ap_get_sta_list(&list) != ESP_OK) {
+        return 0U;
+    }
+    if (list.num < 0) {
+        return 0U;
+    }
+    if (list.num > (int)UINT8_MAX) {
+        return UINT8_MAX;
+    }
+    return (uint8_t)list.num;
+}
+
 int sx_wifi_get_status(sx_wifi_status_t *status)
 {
     wifi_ap_record_t record;
@@ -698,9 +709,10 @@ int sx_wifi_get_status(sx_wifi_status_t *status)
     status->sta_state = s_state.sta_state;
     memcpy(status->sta_ip, s_state.sta_ip, sizeof(status->sta_ip));
     status->sta_last_reason = s_state.last_reason;
-    status->ap_clients = s_state.ap_clients;
     portEXIT_CRITICAL(&s_lock);
     memcpy(status->ap_ip, s_state.ap_ip_text, sizeof(status->ap_ip));
+
+    status->ap_clients = count_ap_clients();
 
     linked = (status->sta_state == SX_WIFI_STA_CONNECTED) ||
              (status->sta_state == SX_WIFI_STA_GOT_IP);

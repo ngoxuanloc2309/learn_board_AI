@@ -1,7 +1,7 @@
 # Handover - AI Learning Device
 
 > File này do mọi phiên làm việc (Claude hoặc AI khác) cập nhật ở cuối phiên. Quy tắc: xem `RuleCode.md` mục 3.
-> Cập nhật lần cuối: 2026-11-08 (phiên 12).
+> Cập nhật lần cuối: 2026-11-08 (phiên 13).
 
 ## 1. Đọc trước khi làm
 
@@ -35,7 +35,7 @@
 | Module `speaker` (`components/modules/speaker`) | Phiên 10: loa I2S TX trên `sx_i2s`, chỉ phát. Người gọi đưa vào PCM mono 16 bit; module gửi cùng mẫu ra cả slot trái và phải (frame stereo 16 bit) vì chân chọn kênh của amp chưa xác minh. Volume tuyến tính 0 đến 100 phần trăm (mặc định 50, chọn theo thiết kế, chưa đo). API: `speaker_init/deinit/start/stop/set_volume/write`. **Đã chạy trên máy host** (`sx_i2s` giả lập, ASan, UBSan, biên dịch sạch `-Wall -Wextra -Wshadow -Wconversion -Wsign-conversion -Wpedantic -Werror`, 8 đột biến đều bị bắt). **Chưa `idf.py build`, chưa biên dịch bằng GCC cho ESP32-S3, chưa chạy trên phần cứng**, chưa có ai gọi (chưa có `board_init()`). Thư mục `modules/storage` không còn: storage đã chuyển lên `services/` (xem dòng dưới) |
 | Module `screenHMI` (`modules/screenHMI`) | Phiên 6: ST7796 qua `sx_i80`, reset qua `sx_gpio`, backlight PWM qua `sx_pwm`. Chỉ gửi lệnh MIPI DCS chuẩn; bảng lệnh riêng của panel do board truyền vào. **Đã chạy trên máy host** (hợp đồng `sx_*` giả lập) và biên dịch sạch bằng GCC 14.2 cho ESP32-S3. Đã build trong dự án ở sandbox (phiên 6, không có cảnh báo biên dịch từ code dự án); **chưa chạy trên phần cứng** |
 | Module `touch` (`modules/touch`) | Phiên 6: FT6x36/FT5x06 (FT6336U) qua `sx_i2c`, chỉ đọc thanh ghi, dùng polling (không dùng chân INT). Kiểm chứng giống `screenHMI`. Đã build trong dự án ở sandbox (phiên 6, không có cảnh báo biên dịch từ code dự án); **chưa chạy trên phần cứng** |
-| Peripheral `sx_wifi` (`peripherals/wifi`, `platform/esp32s3/wifi`) | Phiên 11: hợp đồng và hiện thực Wi-Fi cho STA, AP hoặc APSTA cùng lúc. AP có IP tĩnh do config đặt (đã chốt `192.168.4.1`, netmask 255.255.255.0, gateway = IP của AP, DHCP server của chip), STA dùng DHCP, tự thử nối lại sau mỗi lần mất kết nối. API: `sx_wifi_init/deinit/start/stop/wait_ip/get_status` kèm callback sự kiện. **Đã chạy trên máy host** (ESP-IDF giả lập, ASan, UBSan, 121 check, biên dịch sạch `-Wall -Wextra -Wshadow -Wconversion -Wsign-conversion -Wpedantic -Werror`, 8 đột biến đều bị bắt). Sau phiên 11 chủ dự án đã build và flash (suy ra từ log phiên 12, không có log build): board boot, AP `LEARN_BOARD_2309` lên ở `192.168.4.1` với DHCP server, nhưng STA không nối được router, `reason=201` (`NO_AP_FOUND`) lặp mãi. Phiên 12: thêm `sx_wifi_scan`. **Nguyên nhân lỗi đã tìm ra: SSID thật của router là `Log Terminal ` (có một dấu cách ở cuối, 13 ký tự), cấu hình lại thiếu dấu cách.** Sau khi chủ dự án sửa, log cho thấy STA nối kênh 11, WPA2-PSK, nhận IP `192.168.30.102`, AP tự chuyển sang kênh 11. Phần quét đã chạy trên phần cứng và cho kết quả đúng (22 mạng thấy, 16 liệt kê). Code quét đã được chủ dự án build (không có log build gửi lại). Chủ dự án nối điện thoại vào AP `LEARN_BOARD_2309`: board nhận client (`AID=1`), DHCP cấp `192.168.4.2`, `clients=1`, STA vẫn giữ IP. Chưa kiểm tra: mất kết nối giữa chừng rồi tự nối lại, router WPA3, nối lại khi quét lặp, AP chuyển tiếp mạng ra router (chưa có, chưa là mục tiêu) |
+| Peripheral `sx_wifi` (`peripherals/wifi`, `platform/esp32s3/wifi`) | Phiên 11: hợp đồng và hiện thực Wi-Fi cho STA, AP hoặc APSTA cùng lúc. AP có IP tĩnh do config đặt (đã chốt `192.168.4.1`, netmask 255.255.255.0, gateway = IP của AP, DHCP server của chip), STA dùng DHCP, tự thử nối lại sau mỗi lần mất kết nối. API: `sx_wifi_init/deinit/start/stop/wait_ip/get_status` kèm callback sự kiện. **Đã chạy trên máy host** (ESP-IDF giả lập, ASan, UBSan, 121 check, biên dịch sạch `-Wall -Wextra -Wshadow -Wconversion -Wsign-conversion -Wpedantic -Werror`, 8 đột biến đều bị bắt). Sau phiên 11 chủ dự án đã build và flash (suy ra từ log phiên 12, không có log build): board boot, AP `LEARN_BOARD_2309` lên ở `192.168.4.1` với DHCP server, nhưng STA không nối được router, `reason=201` (`NO_AP_FOUND`) lặp mãi. Phiên 12: thêm `sx_wifi_scan`. **Nguyên nhân lỗi đã tìm ra: SSID thật của router là `Log Terminal ` (có một dấu cách ở cuối, 13 ký tự), cấu hình lại thiếu dấu cách.** Sau khi chủ dự án sửa, log cho thấy STA nối kênh 11, WPA2-PSK, nhận IP `192.168.30.102`, AP tự chuyển sang kênh 11. Phần quét đã chạy trên phần cứng và cho kết quả đúng (22 mạng thấy, 16 liệt kê). Code quét đã được chủ dự án build (không có log build gửi lại). Chủ dự án nối điện thoại vào AP `LEARN_BOARD_2309`: board nhận client (`AID=1`), DHCP cấp `192.168.4.2`, `clients=1`, STA vẫn giữ IP. Phiên 13: chủ dự án rút router 20 giây rồi cắm lại, log cho thấy **tự nối lại chạy đúng trên phần cứng** (xem nhật ký phiên 13). Phiên 13 sửa hai điểm hiển thị: `sta_last_reason` về 0 khi có IP, `ap_clients` đọc từ driver (`esp_wifi_ap_get_sta_list`) thay cho bộ đếm sự kiện; hai sửa này **chưa build, chưa chạy**. Chưa kiểm tra: router WPA3, AP chuyển tiếp mạng ra router (chưa có, chưa là mục tiêu) |
 | Service `http` (`services/http`) | Phiên 11: client HTTP/HTTPS chặn (blocking), một yêu cầu một lần gọi: `http_svc_perform`. Dùng `esp_http_client`; HTTPS luôn kiểm chứng chứng chỉ (CA bundle của firmware, hoặc PEM do người gọi đưa), không có cách tắt. Không theo redirect. **Đã chạy trên máy host** (`esp_http_client` giả lập, ASan, UBSan, 61 check, biên dịch sạch cờ nghiêm ngặt, 6 đột biến đều bị bắt). **Chưa `idf.py build`, chưa gọi server thật** |
 | Service `AI` (`AI_backend`, `AI_frontend`) | Chỉ là file rỗng. Chủ dự án để phần backend AI lại sau (chưa có đặc tả backend: URL, endpoint, JSON, xác thực) |
 | Service `storage` (`services/storage`) | Phiên 6: API file trên thẻ SD (mount, open/read/write/seek, list, mkdir, remove, rename, đọc/ghi cả file), nối FatFs vào `sdcard` qua `storage_diskio.c`. **Đã chạy trên máy host** (FatFs thật, thẻ SD giả lập bằng RAM, ASan và UBSan, 0 lỗi) và biên dịch sạch với `-Wall -Wextra -Wshadow -Wconversion -Wsign-conversion -Wpedantic`. Chủ dự án đã chạy `idf.py build` thành công cho esp32s3 (phiên 6). Chưa thử với thẻ thật, chưa chạy trên phần cứng. Lưu ý: `app_init()` chưa được ai gọi nên linker có thể bỏ code storage, kích thước bin chưa phản ánh chi phí thật của FatFs Chưa có `board_init()` nên chưa có code gọi `storage_init` |
@@ -368,10 +368,11 @@ Chưa làm hoặc chưa kiểm chứng:
 
 Cần chủ dự án làm:
 
+- Chạy `idf.py build` sau phiên 13 (file đổi: `platform/esp32s3/wifi/esp32s3_wifi.c`, `peripherals/wifi/sx_wifi.h` chỉ đổi comment, `app/user/wifi_app/wifi_app.h`) và gửi log build. Sau đó lặp lại thử rút router 20 giây: kỳ vọng sau khi nối lại dòng trạng thái hiện `reason=0` khi `got_ip`, và `clients=` bằng số thiết bị thật đang nối vào AP (kể cả sau lần AP kick client bằng `reason=209`).
 - Chạy `idf.py build` trên máy của mình sau commit `aa0d00c` (lần build đầu có `sx_time`, `screenHMI`, `touch` trên máy chủ dự án). Lưu ý đã gặp ở phiên 6: biến môi trường `IDF_TARGET=esp32` trong shell làm `set-target esp32s3` báo lệch; lệnh `idf.py set-target esp32-s3` chạy được.
 - Chạy `idf.py build` sau phiên 8 (file đổi: `sx_i2s.h`, `esp32s3_i2s.c`, `modules/micro/inmp441.h`, `inmp441.c`, `modules/CMakeLists.txt`) và báo lỗi nếu có.
 - (Đã xong) `DEFAULT_WIFI_SSID` và `DEFAULT_WIFI_PASSWORD` đã điền thật (commit `21c5737`: `Log Terminal`, mật khẩu 10 ký tự). `DEFAULT_STATIC_IP` là `192.168.4.1`. AP và router không cùng dải mạng.
-- (Đã xong ở phiên 12) Chủ dự án đã build, flash và gửi log quét; nguyên nhân là dấu cách cuối SSID. Còn lại: xác nhận `DEFAULT_WIFI_SSID` trong `app_config.h` đã sửa thành `"Log Terminal "` được commit vào repo (mình chỉ thấy log, chưa thấy commit), và quyết định giữ hay tắt quét lặp (`APP_WIFI_SCAN_PERIOD_MS`, xem mục 7).
+- (Đã xong ở phiên 12) Chủ dự án đã build, flash và gửi log quét; nguyên nhân là dấu cách cuối SSID. Phiên 13 đã xác nhận `DEFAULT_WIFI_SSID` là `"Log Terminal "` trong repo (commit `4dfca21`) và chủ dự án đã quyết định tắt quét lặp (`APP_WIFI_SCAN_PERIOD_MS` = 0).
 - Chạy `idf.py build` sau phiên 11 (file đổi: `peripherals/wifi/sx_wifi.h`, `platform/esp32s3/wifi/esp32s3_wifi.c`, `services/http/http.h`, `http.c`, `peripherals/CMakeLists.txt`, `platform/esp32s3/CMakeLists.txt`, `services/CMakeLists.txt`) và gửi log. Cần xem kích thước bin so với phân vùng app 1 MB (xem rủi ro ở nhật ký phiên 11). Với `wifi_app` đã gọi `sx_wifi_*`, kích thước bin lần build này sẽ phản ánh Wi-Fi, lwIP và NVS thật (còn `http_svc_perform` vẫn chưa ai gọi nên chi phí HTTP và TLS chưa hiện trong bin).
 - Chạy `idf.py build` sau phiên 10 (file đổi: `modules/speaker/speaker.h`, `speaker.c`, `peripherals/i2s/sx_i2s.h`, `platform/esp32s3/i2s/esp32s3_i2s.c`) và báo lỗi nếu có. Sau đó có thể bỏ `speaker.c` khỏi nhóm file rỗng cần dọn.
 - Xác nhận nguồn 3.3V cho INMP441 (header mở rộng không có 3.3V; chân +3.3V ở header debug ghi là chỉ tham khảo).
@@ -423,7 +424,7 @@ Thứ tự đề xuất (mỗi bước phải build được trước khi sang b
 2b. `storage_app` (task duy nhất gọi `storage_*`), sau khi có `board_init()` tạo `sdcard_t`, `sdcard_config_t`, `storage_config_t`.
 3. Bring-up trên phần cứng (chủ dự án chạy build và flash): xác minh Flash/PSRAM, chân, LCD hiển thị, touch đọc được, SD mount, speaker ra tiếng, thử mic.
 4. Wi-Fi (`sx_wifi`) và `services/http` đã viết ở phiên 11 (chờ build của chủ dự án). Còn lại: LVGL (flush callback, đọc input từ touch), OTA, và phần AI (chờ đặc tả backend). Sau đó theo roadmap trong `Product_Construction.md`.
-4b. (Phiên 12: nguyên nhân `reason=201` đã rõ, xem nhật ký.) Còn lại cho Wi-Fi: quyết định giữ quét lặp hay đặt `APP_WIFI_SCAN_PERIOD_MS` về 0 (quét lặp chỉ chạy khi STA chưa có IP và hủy lần nối đang chạy khoảng 2 giây); thử mất kết nối rồi tự nối lại (tắt router hoặc đổi kênh); (client nối vào AP đã thử xong ở phiên 12); sau đó mới sang bước tiếp theo của roadmap.
+4b. (Phiên 12: nguyên nhân `reason=201` đã rõ. Phiên 13: thử rút router 20 giây xong, tự nối lại đạt; quét lặp đã tắt.) Còn lại cho Wi-Fi: chủ dự án build và thử lại hai sửa của phiên 13; thử router WPA3 nếu có điều kiện; sau đó sang bước tiếp theo của roadmap (xem 0b, 2a, 4a).
 4a. Phiên sau (khi có log flash Wi-Fi của chủ dự án): `AI_backend` kiểu REST text-only (`POST /v1/chat`, JSON `{session_id,text}` trả `{reply}`, đề xuất của phiên 11, chưa được chủ dự án xác nhận là đặc tả backend) kèm backend Python mẫu; cần thêm cJSON vào `libs/CMakeLists.txt`. Streaming âm thanh qua WebSocket để sau, khi có đặc tả backend và biết loại PSRAM.
 
 ## 8. Ghi chú môi trường (cho phiên chạy trong sandbox)
@@ -581,3 +582,45 @@ Kết quả (log chủ dự án gửi sau khi build và flash bản quét; mình
 - Bài học đưa vào tài liệu: dấu cách cuối SSID rất khó thấy; nên in SSID kèm dấu ngoặc kép (đã có trong log của `wifi_app`).
 
 Kế hoạch tiếp theo: xem mục 7 (4b) và mục 6.
+
+### Phiên 13 (2026-11-08)
+
+Đầu phiên: clone repo (HEAD `69fc042`), đọc `HandOver.md`, `RuleCode.md`, `RuleAgent.md`, `Firmware_Construction.md` và đầu `Product_Construction.md`, đối chiếu repo. Nhiệm vụ: phân tích log khi chủ dự án để board đang nối Wi-Fi rồi rút router khoảng 20 giây rồi cắm lại. Chỉ kiểm tra logic rồi present file, chủ dự án tự build.
+
+Lệch phát hiện khi đối chiếu: tên file docs thật là `HandOver.md`, `RuleCode.md` (không phải chữ thường như prompt ghi). Repo khớp handover ở các điểm còn lại: `DEFAULT_WIFI_SSID` đã là `"Log Terminal "` (commit `4dfca21`), `board.h` vẫn là stub, chưa có `board_init()`, chưa có log build cho phiên 10 đến 12.
+
+Phân tích log (đọc từ log chủ dự án gửi, không đo trực tiếp):
+
+- Mất router: `bcn_timeout`, `ap_probe_send over`, `state: run -> init`, trạng thái `connecting` với `reason=200` (`WIFI_REASON_BEACON_TIMEOUT`). Trong lúc mất router `reason=201` (`NO_AP_FOUND`) lặp lại. Mã 200, 201, 209 đã đối chiếu `esp_wifi_types_generic.h` v5.4.3.
+- Router cắm lại: STA tự nối lại (`auth -> assoc -> run`), router lúc này ở **kênh 6** (trước đó kênh 11), AP của board tự chuyển theo sang kênh 6, STA nhận IP `192.168.30.100` (trước đó `.102`, do DHCP của router cấp lại). Kết luận: tự nối lại đạt trên phần cứng ở lần thử này. Thời gian từ lúc cắm router đến lúc nối lại không đo được vì log không có thời điểm cắm.
+- Quét chẩn đoán chạy ngay khi mất kết nối (vì quy tắc quét mỗi 30 giây khi chưa có IP) và báo `Log Terminal ` không có trong 22 mạng, đúng với lúc router tắt.
+- Sau khi AP đổi kênh, AP gửi SA Query cho điện thoại, điện thoại không trả lời 6 lần, AP ngắt nó với `reason=209` (`SA_QUERY_TIMEOUT`), điện thoại nối lại ngay sau đó. Đây là hệ quả của AP đổi kênh theo router (đã ghi ở phiên 11), không sửa.
+
+Hai điểm sai hiển thị tìm ra từ log (chủ dự án đã duyệt cách sửa):
+
+1. `sta_last_reason` còn `201` dù đã `got_ip` (lần nối đầu là `0`). Nguyên nhân: giá trị chỉ được ghi khi ngắt kết nối và không bao giờ xóa. Cách A đã chọn: xóa về 0 khi nhận IP.
+2. `ap_clients` đếm thiếu: sau lần điện thoại bị kick (`reason=209`) log hiện `clients=0` dù còn một thiết bị, và cuối cùng điện thoại đã nối lại mà vẫn `clients=0`. Bộ đếm cộng trừ theo sự kiện bị lệch; **sự kiện nào bị lặp hoặc mất thì log không cho biết (chưa xác minh)**. Cách sửa: bỏ bộ đếm, đọc số thật từ driver.
+
+Đã làm (sửa trong repo clone, present từng file):
+
+- `LoganSDK/platform/esp32s3/wifi/esp32s3_wifi.c` (sửa): `handle_got_ip` đặt `last_reason = 0`. Bỏ trường `ap_clients` và mọi chỗ cộng, trừ, xóa nó (`handle_ap_client`, `WIFI_EVENT_AP_STOP`, `sx_wifi_start`, `sx_wifi_stop`). Thêm hàm `count_ap_clients` gọi `esp_wifi_ap_get_sta_list`, trả 0 khi chưa chạy, mode không có AP, hoặc driver báo lỗi; `sx_wifi_get_status` dùng hàm này. Callback sự kiện `AP_CLIENT_JOINED/LEFT` vẫn được gọi như cũ.
+- `LoganSDK/components/peripherals/wifi/sx_wifi.h` (sửa, chỉ đổi comment của `sta_last_reason` và `ap_clients`).
+- `LoganSDK/app/user/wifi_app/wifi_app.h` (sửa): `APP_WIFI_SCAN_PERIOD_MS` từ 30000 xuống 0 theo quyết định của chủ dự án (chỉ quét một lần lúc khởi động).
+- `docs/Firmware_Construction.md` (sửa): cập nhật dòng `sx_wifi` ở bảng mục 8.
+- Không sửa `wifi_app.c`, `board.h`, CMake. Không thêm dependency.
+
+Đã kiểm chứng:
+
+- Đọc header ESP-IDF v5.4.3 (tải từ github): `esp_wifi.h` có `esp_wifi_ap_get_sta_list(wifi_sta_list_t *sta)` và mã lỗi của nó; `esp_wifi_types_native.h` (thư mục `include/local`) định nghĩa `wifi_sta_list_t` gồm `sta[ESP_WIFI_MAX_CONN_NUM]` (15 trên ESP32-S3) và `int num`. Hàm `esp_wifi_ap_get_sta_list` nằm trong `esp_wifi.h`, nên không cần include mới.
+- Review logic bằng mắt trên diff: không còn chỗ nào dùng `ap_clients` ngoài `sx_wifi_status_t` và `count_ap_clients`; comment chỉ có ASCII (đã kiểm tra bằng lệnh).
+
+Chưa làm hoặc chưa kiểm chứng:
+
+- **Không chạy `idf.py build`, không biên dịch bằng bất kỳ compiler nào, không chạy giả lập host** (theo yêu cầu phiên này). Chưa chạy trên phần cứng.
+- `wifi_sta_list_t` nằm trên stack (khoảng 250 byte, chưa đo `sizeof`). Nếu `sx_wifi_get_status` bị gọi từ callback trong task sự kiện hệ thống (stack 2304 byte) thì cần để ý.
+- Chưa biết driver cập nhật danh sách client trước hay sau khi phát sự kiện `AP_STADISCONNECTED`; nếu người gọi đọc `ap_clients` ngay trong callback thì có thể thấy số cũ (chưa xác minh).
+- Khi STA đã `linked` nhưng chưa có IP, dòng trạng thái vẫn có thể hiện `reason` cũ trong khoảng ngắn (chỉ xóa khi nhận IP).
+- Mã nguồn `wifi_app.c` không đổi, nhưng với `APP_WIFI_SCAN_PERIOD_MS = 0` nhánh quét lặp trở thành mã không bao giờ chạy; chưa xem cảnh báo của compiler về việc này.
+- Chưa thử router WPA3; chưa đo thời gian nối lại sau khi cắm router.
+
+Kế hoạch tiếp theo: xem mục 6 và mục 7 (4b).

@@ -94,8 +94,8 @@ typedef struct {
     sx_wifi_sta_state_t sta_state;
     char sta_ip[SX_WIFI_IP_STR_LEN];  /* empty string when there is no IP */
     int8_t sta_rssi;                  /* dBm, 0 when not linked */
-    uint8_t sta_last_reason;          /* last disconnect reason, chip specific code, 0 if none */
-    uint8_t ap_clients;               /* stations now joined to the AP */
+    uint8_t sta_last_reason;          /* last disconnect reason, chip specific code, 0 if none or once the IP is back */
+    uint8_t ap_clients;               /* stations joined to the AP, read from the driver at each call */
     char ap_ip[SX_WIFI_IP_STR_LEN];   /* empty string when the mode has no AP */
 } sx_wifi_status_t;
 
