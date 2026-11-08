@@ -80,7 +80,8 @@ typedef enum{
  * The interrupt pin of the reference (GPIO 7) is not used because the touch module polls.
  * DESIGN for the rest: I2C port 0, 100 kHz, no internal pull-ups (the board is assumed to have
  * external ones, not verified: if the controller does not answer, try enabling them),
- * and the coordinate swap (raw 320 x 480 view turned to 480 x 320). Mirror flags are not known.
+ * and the coordinate swap (raw 320 x 480 view turned to 480 x 320). The Y mirror was found on the
+ * board in session 16 (observed by tapping, not from a datasheet). X needs no mirror (observed).
  */
 #define BOARD_PIN_TOUCH_SDA         6
 #define BOARD_PIN_TOUCH_SCL         5
@@ -89,7 +90,7 @@ typedef enum{
 #define BOARD_TOUCH_I2C_PULLUP      false
 #define BOARD_TOUCH_SWAP_XY         true
 #define BOARD_TOUCH_MIRROR_X        false
-#define BOARD_TOUCH_MIRROR_Y        false
+#define BOARD_TOUCH_MIRROR_Y        true        /* session 16: with false the owner saw top and bottom swapped */
 
 /*
  * microSD, SPI mode. REF for the pins.
