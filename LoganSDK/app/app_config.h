@@ -15,7 +15,7 @@
 /*AP Mode*/
 #define DEFAULT_AP_SSID         "LEARN_BOARD_2309"
 #define DEFAULT_AP_PASSWORD     "123456789"
-#define DEFAULT_STATIC_IP       "192.168.1.1"
+#define DEFAULT_STATIC_IP       "192.168.4.1"
 
 /*Others Configurations*/
 

@@ -1,23 +1,12 @@
-#include "AI_app.h"
-#include "http_app.h"
-#include "ntp_app.h"
-#include "speaker_app.h"
-#include "storage_app.h"
+#include "app.h"
+#include "wifi_app.h"
 
-void app_init(void)
+/*
+ * Kept in its own file on purpose: app.c references init functions that have no body yet,
+ * and the linker would pull that file in (and fail) as soon as this one is used.
+ */
+void app_start(void)
 {
-    // Initialize the AI application
-    ai_app_init();
-
-    // Initialize the HTTP application
-    http_app_init();
-
-    // Initialize the NTP application
-    ntp_app_init();
-
-    // Initialize the speaker application
-    speaker_app_init();
-
-    // Initialize the storage application
-    app_storage_init();
+    /* The result is already printed by wifi_app_start. A failed Wi-Fi start does not stop the device. */
+    (void)wifi_app_start();
 }

@@ -1,4 +1,4 @@
-#include "sx_wifi.h"#include <stdbool.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
