@@ -11,6 +11,7 @@
 #include "esp_wifi_default.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
+#include "freertos/task.h"
 #include "nvs_flash.h"
 
 #include "sx_wifi.h"
@@ -20,9 +21,18 @@
 
 #define GOT_IP_BIT           (1U << 0)
 
+/*
+ * A scan right after a cancelled connect can still report that the driver is connecting.
+ * It is tried again a few times. Chosen by design, not measured.
+ */
+#define SCAN_STATE_TRIES     5U
+#define SCAN_STATE_WAIT_MS   100U
+
 typedef struct {
     bool initialized;
     volatile bool running;
+    /* True while sx_wifi_scan has cancelled a connect attempt. Disconnect events are then ignored. */
+    volatile bool scan_paused;
     bool wifi_inited;
     sx_wifi_mode_t mode;
     uint32_t retry_ms;
@@ -48,6 +58,9 @@ static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 static EventGroupHandle_t s_group;
 static StaticEventGroup_t s_group_storage;
 
+/* Scan results. sx_wifi_scan calls must not overlap, so one static buffer is enough. */
+static wifi_ap_record_t s_scan_records[SX_WIFI_SCAN_MAX_ENTRIES];
+
 static int map_error(esp_err_t error)
 {
     switch (error) {
@@ -58,10 +71,12 @@ static int map_error(esp_err_t error)
     case ESP_ERR_NO_MEM:
         return SX_WIFI_ERR_NOMEM;
     case ESP_ERR_TIMEOUT:
+    case ESP_ERR_WIFI_TIMEOUT:
         return SX_WIFI_ERR_TIMEOUT;
     case ESP_ERR_INVALID_STATE:
     case ESP_ERR_WIFI_NOT_INIT:
     case ESP_ERR_WIFI_NOT_STARTED:
+    case ESP_ERR_WIFI_STATE:
         return SX_WIFI_ERR_STATE;
     default:
         return SX_WIFI_ERR_BUS;
@@ -267,7 +282,7 @@ static void retry_timer_cb(void *arg)
 {
     (void)arg;
 
-    if (!s_state.running) {
+    if (!s_state.running || s_state.scan_paused) {
         return;
     }
 
@@ -280,6 +295,11 @@ static void retry_timer_cb(void *arg)
 static void handle_sta_disconnected(const wifi_event_sta_disconnected_t *info)
 {
     bool running = s_state.running;
+
+    /* The scan cancelled the connect attempt itself, so this is not a real failure. */
+    if (s_state.scan_paused) {
+        return;
+    }
 
     portENTER_CRITICAL(&s_lock);
     if (info != NULL) {
@@ -334,7 +354,8 @@ static void event_handler(void *arg, esp_event_base_t base, int32_t id, void *da
     if (base == WIFI_EVENT) {
         switch (id) {
         case WIFI_EVENT_STA_START:
-            if (s_state.running) {
+            /* While a scan runs, it starts the connect attempt itself when it is done. */
+            if (s_state.running && !s_state.scan_paused) {
                 set_sta_state(SX_WIFI_STA_CONNECTING, true);
                 if (esp_wifi_connect() != ESP_OK) {
                     schedule_retry();
@@ -685,6 +706,158 @@ int sx_wifi_get_status(sx_wifi_status_t *status)
              (status->sta_state == SX_WIFI_STA_GOT_IP);
     if (linked && (esp_wifi_sta_get_ap_info(&record) == ESP_OK)) {
         status->sta_rssi = record.rssi;
+    }
+    return SX_WIFI_OK;
+}
+
+static sx_wifi_auth_t map_auth(wifi_auth_mode_t mode)
+{
+    switch (mode) {
+    case WIFI_AUTH_OPEN:
+        return SX_WIFI_AUTH_OPEN;
+    case WIFI_AUTH_WEP:
+        return SX_WIFI_AUTH_WEP;
+    case WIFI_AUTH_WPA_PSK:
+        return SX_WIFI_AUTH_WPA;
+    case WIFI_AUTH_WPA2_PSK:
+        return SX_WIFI_AUTH_WPA2;
+    case WIFI_AUTH_WPA_WPA2_PSK:
+        return SX_WIFI_AUTH_WPA_WPA2;
+    case WIFI_AUTH_WPA3_PSK:
+        return SX_WIFI_AUTH_WPA3;
+    case WIFI_AUTH_WPA2_WPA3_PSK:
+        return SX_WIFI_AUTH_WPA2_WPA3;
+    default:
+        return SX_WIFI_AUTH_OTHER;
+    }
+}
+
+/* Keeps printable ASCII only, so a strange network name cannot garble the console. */
+static void copy_ssid(const uint8_t *source, char *out)
+{
+    size_t index;
+
+    for (index = 0U; index < SX_WIFI_SSID_MAX_LEN; index++) {
+        uint8_t value = source[index];
+
+        if (value == 0U) {
+            break;
+        }
+        out[index] = ((value >= 0x20U) && (value <= 0x7EU)) ? (char)value : '?';
+    }
+    out[index] = '\0';
+}
+
+/* Starts the connect attempt again after a scan has cancelled it. */
+static void resume_connect(void)
+{
+    s_state.scan_paused = false;
+    if (!s_state.running) {
+        return;
+    }
+
+    set_sta_state(SX_WIFI_STA_CONNECTING, false);
+    if (esp_wifi_connect() != ESP_OK) {
+        schedule_retry();
+    }
+}
+
+int sx_wifi_scan(sx_wifi_scan_entry_t *entries, uint8_t max_entries, uint8_t *count,
+                 uint16_t *total)
+{
+    wifi_scan_config_t scan_config;
+    sx_wifi_sta_state_t state;
+    esp_timer_handle_t timer;
+    uint16_t found = 0U;
+    uint16_t listed = 0U;
+    uint16_t capacity;
+    uint16_t index;
+    uint32_t attempt;
+    bool pause;
+    esp_err_t err;
+
+    if (count != NULL) {
+        *count = 0U;
+    }
+    if (total != NULL) {
+        *total = 0U;
+    }
+    if ((entries == NULL) || (max_entries == 0U) || (count == NULL)) {
+        return SX_WIFI_ERR_PARAM;
+    }
+    if (!s_state.initialized || !s_state.running || !mode_has_sta(s_state.mode)) {
+        return SX_WIFI_ERR_STATE;
+    }
+
+    capacity = (max_entries < SX_WIFI_SCAN_MAX_ENTRIES) ? (uint16_t)max_entries
+                                                        : (uint16_t)SX_WIFI_SCAN_MAX_ENTRIES;
+
+    memset(&scan_config, 0, sizeof(scan_config));
+    scan_config.show_hidden = true;
+    scan_config.scan_type = WIFI_SCAN_TYPE_ACTIVE;
+
+    /*
+     * The driver refuses to scan while a connect attempt is running. The attempt is paused when
+     * it is running, or when the start event of STA has not arrived yet and would begin it. A link
+     * that is already up is left alone: a scan on top of it is allowed.
+     */
+    portENTER_CRITICAL(&s_lock);
+    state = s_state.sta_state;
+    portEXIT_CRITICAL(&s_lock);
+    pause = (state == SX_WIFI_STA_CONNECTING) || (state == SX_WIFI_STA_STOPPED);
+    if (pause) {
+        s_state.scan_paused = true;
+        timer = s_state.retry_timer;
+        if (timer != NULL) {
+            (void)esp_timer_stop(timer);
+        }
+        /* The result is ignored: it fails when nothing is connecting, which is fine. */
+        (void)esp_wifi_disconnect();
+    }
+
+    err = ESP_ERR_WIFI_STATE;
+    for (attempt = 0U; (attempt < SCAN_STATE_TRIES) && (err == ESP_ERR_WIFI_STATE); attempt++) {
+        if (attempt > 0U) {
+            vTaskDelay(pdMS_TO_TICKS(SCAN_STATE_WAIT_MS));
+        }
+        err = esp_wifi_scan_start(&scan_config, true);
+    }
+
+    if (err == ESP_OK) {
+        err = esp_wifi_scan_get_ap_num(&found);
+    }
+    if ((err == ESP_OK) && (found > 0U)) {
+        /* This call also frees the list the driver keeps, even for the entries not copied. */
+        listed = (found < capacity) ? found : capacity;
+        err = esp_wifi_scan_get_ap_records(&listed, s_scan_records);
+    }
+    if (err != ESP_OK) {
+        /* A list may still exist after a failure, and it would stay in memory. */
+        (void)esp_wifi_clear_ap_list();
+    }
+
+    if (pause) {
+        resume_connect();
+    }
+
+    if (err != ESP_OK) {
+        return map_error(err);
+    }
+
+    if (listed > capacity) {
+        listed = capacity;
+    }
+    for (index = 0U; index < listed; index++) {
+        const wifi_ap_record_t *record = &s_scan_records[index];
+
+        copy_ssid(record->ssid, entries[index].ssid);
+        entries[index].channel = record->primary;
+        entries[index].rssi = record->rssi;
+        entries[index].auth = map_auth(record->authmode);
+    }
+    *count = (uint8_t)listed;
+    if (total != NULL) {
+        *total = found;
     }
     return SX_WIFI_OK;
 }

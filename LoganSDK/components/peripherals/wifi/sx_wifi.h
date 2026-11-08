@@ -27,6 +27,9 @@ extern "C" {
 /* Used when sta_retry_ms is 0. Chosen by design, not measured. */
 #define SX_WIFI_RETRY_MS_DEFAULT    5000U
 
+/* Most entries sx_wifi_scan can return in one call. Chosen by design, not measured. */
+#define SX_WIFI_SCAN_MAX_ENTRIES    16
+
 typedef enum {
     SX_WIFI_MODE_STA = 1,
     SX_WIFI_MODE_AP = 2,
@@ -96,9 +99,28 @@ typedef struct {
     char ap_ip[SX_WIFI_IP_STR_LEN];   /* empty string when the mode has no AP */
 } sx_wifi_status_t;
 
+typedef enum {
+    SX_WIFI_AUTH_OPEN = 0,
+    SX_WIFI_AUTH_WEP,
+    SX_WIFI_AUTH_WPA,
+    SX_WIFI_AUTH_WPA2,
+    SX_WIFI_AUTH_WPA_WPA2,
+    SX_WIFI_AUTH_WPA3,
+    SX_WIFI_AUTH_WPA2_WPA3,
+    SX_WIFI_AUTH_OTHER  /* enterprise, OWE, WAPI and anything not listed above */
+} sx_wifi_auth_t;
+
+/* One access point seen by sx_wifi_scan. */
+typedef struct {
+    char ssid[SX_WIFI_SSID_MAX_LEN + 1];  /* empty string for a hidden network */
+    uint8_t channel;                      /* primary channel */
+    int8_t rssi;                          /* dBm */
+    sx_wifi_auth_t auth;
+} sx_wifi_scan_entry_t;
+
 /*
- * Lifecycle calls (init, deinit, start, stop) must not run at the same time as any other
- * call of this contract. sx_wifi_get_status and sx_wifi_wait_ip may run from any task.
+ * Lifecycle calls (init, deinit, start, stop) and sx_wifi_scan must not run at the same time as
+ * any other call of this contract. sx_wifi_get_status and sx_wifi_wait_ip may run from any task.
  *
  * sx_wifi_init prepares the driver and network interfaces but does not start the radio.
  * Failures inside the chip driver while creating the interfaces can abort the system
@@ -126,6 +148,28 @@ int sx_wifi_wait_ip(uint32_t timeout_ms);
 
 /* Copies the current state. Allowed whenever the driver is initialised. */
 int sx_wifi_get_status(sx_wifi_status_t *status);
+
+/*
+ * Looks for access points on all channels and blocks until the scan is done (about 2 seconds).
+ * Meant for diagnosis, for example to see whether the router is visible to the chip at all.
+ * Needs a started driver and a mode with STA.
+ *
+ * entries receives up to max_entries results (at most SX_WIFI_SCAN_MAX_ENTRIES), strongest
+ * signal first. *count is the number of entries written. total (may be NULL) is the number of
+ * access points the chip saw, which can be larger than *count. Hidden networks are included
+ * with an empty ssid. Bytes of an ssid outside printable ASCII are replaced by '?'.
+ *
+ * While STA is still trying to link, that attempt is cancelled for the scan and started again
+ * afterwards, so the last disconnect reason in sx_wifi_get_status is kept. A STA that already
+ * has a link is scanned without being disconnected. In APSTA mode the radio leaves the AP
+ * channel while it scans, so AP clients may drop for a moment.
+ *
+ * Returns SX_WIFI_ERR_PARAM for NULL entries or count, or max_entries 0. SX_WIFI_ERR_STATE when
+ * the driver is not running or has no STA, SX_WIFI_ERR_TIMEOUT when the chip scan times out.
+ * *count is 0 on every error.
+ */
+int sx_wifi_scan(sx_wifi_scan_entry_t *entries, uint8_t max_entries, uint8_t *count,
+                 uint16_t *total);
 
 #ifdef __cplusplus
 }

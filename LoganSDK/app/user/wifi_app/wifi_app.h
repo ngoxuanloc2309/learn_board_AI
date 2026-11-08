@@ -24,6 +24,16 @@
 #endif
 
 /*
+ * Diagnosis scan. One scan runs right after the start, then another one every
+ * APP_WIFI_SCAN_PERIOD_MS while STA has no IP. Set it to 0 to scan only once.
+ * A scan cancels the running connect attempt for about 2 seconds, so turn the repeats off
+ * when the cause of a connection problem is known. Chosen by design, not measured.
+ */
+#ifndef APP_WIFI_SCAN_PERIOD_MS
+#define APP_WIFI_SCAN_PERIOD_MS 30000U
+#endif
+
+/*
  * Creates a task that starts Wi-Fi in APSTA mode with the DEFAULT_* values from app_config.h,
  * then prints the status to the console every APP_WIFI_STATUS_PERIOD_MS.
  * Returns 0 when the task was created, -1 when it could not be created.
