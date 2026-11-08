@@ -1,7 +1,7 @@
 # Handover - AI Learning Device
 
 > File này do mọi phiên làm việc (Claude hoặc AI khác) cập nhật ở cuối phiên. Quy tắc: xem `RuleCode.md` mục 3.
-> Cập nhật lần cuối: 2026-11-08 (phiên 14).
+> Cập nhật lần cuối: 2026-11-08 (phiên 15).
 
 ## 1. Đọc trước khi làm
 
@@ -40,7 +40,7 @@
 | Service `AI` (`AI_backend`, `AI_frontend`) | Chỉ là file rỗng. Chủ dự án để phần backend AI lại sau (chưa có đặc tả backend: URL, endpoint, JSON, xác thực) |
 | Service `storage` (`services/storage`) | Phiên 6: API file trên thẻ SD (mount, open/read/write/seek, list, mkdir, remove, rename, đọc/ghi cả file), nối FatFs vào `sdcard` qua `storage_diskio.c`. **Đã chạy trên máy host** (FatFs thật, thẻ SD giả lập bằng RAM, ASan và UBSan, 0 lỗi) và biên dịch sạch với `-Wall -Wextra -Wshadow -Wconversion -Wsign-conversion -Wpedantic`. Chủ dự án đã chạy `idf.py build` thành công cho esp32s3 (phiên 6). Chưa thử với thẻ thật, chưa chạy trên phần cứng. Lưu ý: `app_init()` chưa được ai gọi nên linker có thể bỏ code storage, kích thước bin chưa phản ánh chi phí thật của FatFs Chưa có `board_init()` nên chưa có code gọi `storage_init` |
 | `libs/` (FatFs R0.16 của ChaN, cJSON) | Phiên 6: `libs/CMakeLists.txt` đăng ký component `libs` chỉ build FatFs (`ff.c`, `ffsystem.c`, `ffunicode.c`). cJSON nằm trong thư mục nhưng **chưa build**. Không dùng component `fatfs` của ESP-IDF |
-| App tasks | `app_start()` có (gọi `wifi_app_start()`), `app_main()` gọi `app_start()`. `wifi_app` chạy trên phần cứng ở mức Wi-Fi (xem dòng `sx_wifi`), phiên 12 thêm quét chẩn đoán vào `wifi_app`. Phiên 13 thêm `http_app` (task chờ IP rồi gửi một GET thử; đã chạy trên phần cứng, xem dòng `http`). Các app khác (`AI_app`, `ntp_app`, `screen_app`, `speaker_app`, `storage_app`) vẫn là file rỗng hoặc chỉ có header. `board_init()` có từ phiên 14 nhưng `app_start()` **chưa gọi** nó (theo quyết định của chủ dự án) |
+| App tasks | `app_start()` có (gọi `wifi_app_start()`), `app_main()` gọi `app_start()`. `wifi_app` chạy trên phần cứng ở mức Wi-Fi (xem dòng `sx_wifi`), phiên 12 thêm quét chẩn đoán vào `wifi_app`. Phiên 13 thêm `http_app` (task chờ IP rồi gửi một GET thử; đã chạy trên phần cứng, xem dòng `http`). Phiên 15 thêm `screen_app` (task bring-up màn hình, xem nhật ký phiên 15; **chưa build, chưa chạy trên phần cứng**). Các app khác (`AI_app`, `ntp_app`, `speaker_app`, `storage_app`) vẫn là file rỗng hoặc chỉ có header. `board_init()` có từ phiên 14; từ phiên 15 nó được gọi **bên trong task của `screen_app`**, còn `app_start()` tự nó không gọi `board_init()` (`app_start()` gọi `screen_app_start()`) |
 | LVGL, OTA | Chưa bắt đầu |
 
 ### Kiến trúc (tóm tắt, chi tiết ở Firmware_Construction.md)
@@ -370,6 +370,7 @@ Chưa làm hoặc chưa kiểm chứng:
 
 Cần chủ dự án làm:
 
+- (Mới, phiên 15) Build bản có `screen_app` (file đổi: `LoganSDK/app/app.c`, `LoganSDK/app/user/screen_app/screen_app.c`, `screen_app.h`, `docs/HandOver.md`), flash, rồi gửi: (a) log build, gồm cảnh báo của hai file `screen_app.c`, `app.c` và dòng kích thước `board_hmi_ai.bin` (bản phiên 13 là 0xb61f0; lần này `board.o`, `screenHMI`, `sx_i80`, `sx_pwm` sẽ vào bin nên bin lớn hơn); (b) log boot và các dòng `[screen] ...`; (c) mô tả bằng mắt từng bước: màn hình có sáng không, mỗi màu tô toàn màn hình trông ra sao (đối chiếu bảng ở nhật ký phiên 15), mẫu cuối có 4 góc đúng vị trí và viền trắng đủ 4 cạnh không, đen có ra đen không (nếu ra trắng thì cần `BOARD_LCD_INVERT = true`), có nhiễu hay sọc không; (d) board có boot đúng không (chân strapping GPIO 0, 3, 45, 46). Sau đó sửa macro `BOARD_LCD_MADCTL`, `BOARD_LCD_INVERT`, `BOARD_LCD_PCLK_HZ` trong `board.h` theo kết quả, hoặc gửi kết quả để phiên sau sửa.
 - (Chủ dự án báo build phiên 14 không lỗi, chưa có log: còn cần cảnh báo ở `board.c` và dòng kích thước `board_hmi_ai.bin` so với 0xb61f0 nếu muốn xác nhận bin không đổi.) Build sau phiên 14 (file đổi: `LoganSDK/board/board.h`, `board.c`, `CMakeLists.txt`, `docs/Firmware_Construction.md`, `docs/HandOver.md`) và gửi log. Điểm cần xem: có cảnh báo hay lỗi nào ở `board.c`; `board` thêm `REQUIRES services` có tạo vòng phụ thuộc component không (kỳ vọng không, `services` không `REQUIRES board`); kích thước bin so với 0xb61f0 của phiên 13 (kỳ vọng gần như không đổi vì `app` chưa gọi hàm nào của `board`, linker có thể bỏ `board.o`).
 - Bring-up từng thiết bị (việc sau, khi bạn muốn): gọi `board_init()` rồi `board_init_screen()`, thử `screen_hmi_set_backlight` và `screen_hmi_fill_rect` với vài màu đã biết để kiểm tra hướng, thứ tự RGB/BGR, đảo màu và `pclk_hz`; sau đó `board_init_touch()`. Khi một giá trị `DESIGN` sai, sửa macro tương ứng trong `board.h`. Cần cho tôi biết chọn thiết bị nào làm trước và gửi log.
 - Chân GPIO 0, 3, 45, 46 (strapping) đang bị LCD dùng; nếu board không boot đúng sau khi `board_init_screen()` chạy, báo ngay kèm log boot.
@@ -428,7 +429,7 @@ Thứ tự đề xuất (mỗi bước phải build được trước khi sang b
 2. Modules: `speaker` đã viết ở phiên 10 (chờ build của chủ dự án). `screenHMI` và `touch` đã viết ở phiên 6; `storage` đã viết ở phiên 6 và nằm ở `services/storage`.
 2a. Theo chỉ đạo của chủ dự án (phiên 10): sau `speaker` là viết phần service, rồi mới viết app. Chưa chốt service nào (xem mục 6). `board.h`, `board_init()`, `app_start()` vẫn cần có trước khi bất kỳ instance nào (speaker, mic, màn hình, touch, SD) được tạo và chạy.
 2b. `storage_app` (task duy nhất gọi `storage_*`). Phiên 14: `board.c` đã có `sdcard_t`, `sdcard_config_t`, `storage_config_t` và `board_init_storage()`; `storage_app` cần gọi `storage_mount()` (chạy trong task riêng, có thể chặn vài giây khi không có thẻ).
-3. Bring-up trên phần cứng (chủ dự án chạy build và flash): xác minh Flash/PSRAM, chân, LCD hiển thị, touch đọc được, SD mount, speaker ra tiếng, thử mic.
+3. Bring-up trên phần cứng (chủ dự án chạy build và flash): xác minh Flash/PSRAM, chân, LCD hiển thị, touch đọc được, SD mount, speaker ra tiếng, thử mic. Phiên 15: đã viết `screen_app` cho bước LCD (chờ build, flash và kết quả quan sát của chủ dự án). Bước tiếp theo sau khi LCD đúng hướng, đúng màu: `board_init_touch()` và đọc `touch_read_id` / `touch_read`, rồi mới tới LVGL.
 4. Wi-Fi (`sx_wifi`) và `services/http` đã viết ở phiên 11; chạy trên phần cứng (HTTPS GET thật thành công, xem phiên 14). Còn lại: LVGL (flush callback, đọc input từ touch), OTA, và phần AI (chờ đặc tả backend). Sau đó theo roadmap trong `Product_Construction.md`.
 4b. (Phiên 12: nguyên nhân `reason=201` đã rõ. Phiên 13: thử rút router 20 giây xong, tự nối lại đạt; quét lặp đã tắt.) Còn lại cho Wi-Fi: chủ dự án build và thử lại hai sửa của phiên 13; thử router WPA3 nếu có điều kiện; sau đó sang bước tiếp theo của roadmap (xem 0b, 2a, 4a).
 4a. Phiên sau (khi có log flash Wi-Fi của chủ dự án): `AI_backend` kiểu REST text-only (`POST /v1/chat`, JSON `{session_id,text}` trả `{reply}`, đề xuất của phiên 11, chưa được chủ dự án xác nhận là đặc tả backend) kèm backend Python mẫu; cần thêm cJSON vào `libs/CMakeLists.txt`. Streaming âm thanh qua WebSocket để sau, khi có đặc tả backend và biết loại PSRAM.
@@ -714,3 +715,47 @@ Bổ sung phiên 14 (chủ dự án gửi log chạy `http_app` của bản phi�
 - Chưa có log build đầy đủ cho bản này; kích thước bin sau khi `http_svc_perform` được gọi (chi phí HTTP và TLS) vẫn chưa biết.
 - Việc kế tiếp theo kế hoạch: build bản phiên 14 (`board`) và gửi log; quyết định có gọi `http` lặp để đo heap hay chuyển sang bring-up màn hình. `AI_backend` vẫn chờ đặc tả backend.
 - Cuối phiên 14: chủ dự án báo bằng lời đã build bản có `board.h` và `board.c` mới và **không có lỗi**. Không có log, nên không ghi được số cảnh báo hay kích thước bin. Chưa flash bản này (chưa biết), `app_start()` không gọi `board`, nên hành vi chạy kỳ vọng như bản phiên 13.
+
+### Phiên 15 (2026-11-08)
+
+Đầu phiên: clone repo (HEAD `f3c7bdc`), đọc `HandOver.md`, `RuleAgent.md`, `RuleCode.md`, `Firmware_Construction.md` và phần liên quan của `Product_Construction.md`, đối chiếu repo. Nhiệm vụ: bring-up màn hình bằng `screen_app`. Theo yêu cầu phiên này: chỉ kiểm tra logic rồi present file, chủ dự án tự build.
+
+Lệch phát hiện khi đối chiếu: không có lệch về code. Hai commit sau `c0d663b` (`d30f4e8`, `f3c7bdc`) đúng là các file phiên 14 (`board.h`, `board.c`, `board/CMakeLists.txt`, `Firmware_Construction.md`, `HandOver.md`). Chỉ còn lệch tên file docs đã biết (`HandOver.md`, `RuleCode.md`). `screen_app.c` và `screen_app.h` là file 0 byte và đã có sẵn trong `app/CMakeLists.txt` (SRCS và INCLUDE_DIRS), nên không cần sửa CMake. Chưa có log build của phiên 14 (chỉ có lời báo của chủ dự án).
+
+Đã chốt với chủ dự án đầu phiên: mỗi màu giữ 1,5 s, backlight 100%, mẫu cố định ở cuối rồi giữ nguyên trên màn hình, task tự kết thúc.
+
+Đã làm (present từng file, đường dẫn trong repo):
+
+- `LoganSDK/app/user/screen_app/screen_app.h` (viết vào file rỗng): macro cấu hình `APP_SCREEN_TASK_NAME`, `APP_SCREEN_STACK_SIZE` (6144 byte), `APP_SCREEN_TASK_PRIORITY` (2), `APP_SCREEN_BACKLIGHT_PERCENT` (100), `APP_SCREEN_HOLD_MS` (1500), khai báo `screen_app_start()`. Stack, ưu tiên, độ sáng, thời gian giữ đều do phiên này chọn, chưa đo.
+- `LoganSDK/app/user/screen_app/screen_app.c` (viết vào file rỗng): task `app_screen_task`. Trình tự: `board_init()`, `board_init_screen()`, `board_get_screen()`, in `size`, `madctl`, `invert`, `pclk` lấy từ macro của `board.h`, `screen_hmi_set_backlight(100)`, tô toàn màn hình lần lượt đỏ (0xF800), xanh lá (0x07E0), xanh dương (0x001F), trắng (0xFFFF), đen (0x0000), mỗi màu giữ 1,5 s, rồi vẽ mẫu cố định gồm nền đen, viền trắng 2 px, khối 120x80 đỏ ở góc trên trái, xanh lá ở trên phải, xanh dương ở dưới trái, vàng (0xFFE0) ở dưới phải, ô trắng 40x40 ở giữa (kích thước màn hình lấy từ `BOARD_LCD_WIDTH` và `BOARD_LCD_HEIGHT`). Mỗi lần tô in tọa độ, giá trị RGB565 và thời gian (ms, đo bằng `sx_get_time_ms`). Cuối cùng in stack còn trống thấp nhất (`uxTaskGetStackHighWaterMark`) rồi `vTaskDelete`. Mọi lỗi (init, backlight, tô) in mã rồi dừng task. Không sửa `board.h`: chủ dự án chỉnh các macro `DESIGN` khi có kết quả.
+- `LoganSDK/app/app.c` (sửa): thêm `#include "screen_app.h"` và gọi `screen_app_start()` sau `http_app_start()`. `wifi_app` và `http_app` giữ nguyên. Chưa sửa comment cũ trong `app.h` ("for now it only starts Wi-Fi", đã lỗi thời), vì chưa cần thiết.
+- Không đổi CMake, không thêm dependency, không đụng `board.h`, `board.c`, `screenHMI`.
+
+Bảng đối chiếu màu khi quan sát (suy từ phép tính RGB565 và thứ tự byte của panel, **chưa kiểm chứng trên board**; giả định panel đọc từ ghép byte cao trước):
+
+| Thấy lần lượt khi tô đỏ, xanh lá, xanh dương | Nghĩa là |
+|---|---|
+| đỏ, xanh lá, xanh dương | thứ tự byte và thứ tự màu đúng |
+| xanh dương, xanh lá, đỏ | bit BGR của MADCTL sai (đổi `SCREEN_HMI_MADCTL_BGR` trong `BOARD_LCD_MADCTL`) |
+| xanh dương, đỏ, xanh lá | thứ tự byte sai (`swap_color_bytes` trong `board.c`) |
+| đỏ, xanh dương, xanh lá | sai cả hai |
+
+Hướng màn hình: so 4 góc của mẫu cuối với danh sách trên (trên trái đỏ, trên phải xanh lá, dưới trái xanh dương, dưới phải vàng). Lật hay xoay thì đổi bit `MX`, `MY`, `MV` trong `BOARD_LCD_MADCTL`. Đảo màu: đen phải ra đen, trắng phải ra trắng, nếu ngược lại thì đặt `BOARD_LCD_INVERT = true`. `pclk_hz`: sửa `BOARD_LCD_PCLK_HZ` rồi build lại, quan sát nhiễu, sọc hoặc lỗi trả về, so thời gian tô ghi trong log.
+
+Đã kiểm chứng:
+
+- Biên dịch thử trên máy host (gcc 13.3, **không phải** GCC cho ESP32-S3, **không phải** `idf.py build`) với `-Wall -Wextra -Wshadow -Wconversion -Wsign-conversion -Wpedantic -Wmissing-prototypes -Wstrict-prototypes -Werror`: `screen_app.c` và `app.c` sạch, dùng header thật của dự án (`board.h`, `screenHMI.h` và các header `sx_*`) và header FreeRTOS giả.
+- Chạy logic trên host (ASan, UBSan) với `board_*`, `screen_hmi_*`, `sx_time`, FreeRTOS giả lập, trong đó `fill_rect` giả lập kiểm tra cùng quy tắc vùng hợp lệ với module thật: tham số task (stack 6144, ưu tiên 2), tạo task lỗi trả -1; đúng thứ tự gọi `board_init`, `board_init_screen`, backlight 100, năm màu đúng giá trị và đúng thứ tự, tổng thời gian giữ 7500 ms, 10 hình chữ nhật của mẫu; mọi pixel của khung hình cuối được ghi và các góc, mép khối, ô giữa đúng vị trí; các đường lỗi (init lỗi, `board_init_screen` lỗi, getter trả NULL, backlight lỗi, tô lỗi ở màu thứ ba, tô lỗi giữa mẫu) đều dừng đúng chỗ, không gọi các bước sau và có kết thúc task. 7 đột biến cố ý vào code production (đổi đỏ thành xanh dương, đổi bề rộng viền, đổi độ sáng, bỏ kiểm tra NULL, bỏ thời gian giữ, bỏ mẫu cuối, lệch khối trên phải) đều bị bắt. Bài test và bản giả lập nằm ngoài repo (không commit); giả lập chỉ chứng minh logic khớp mô hình do chính phiên này viết.
+- Kiểm tra bằng lệnh: ba file code chỉ có ký tự ASCII.
+- Đọc code platform trong repo: `esp32s3_i80.c` truyền `swap_color_bytes` vào `flags.swap_color_bytes` của `esp_lcd_panel_io_i80_config_t`; không tìm hiểu thêm hành vi phần cứng của cờ này (phiên này không mở header ESP-IDF, `screen_app` không include header driver).
+
+Chưa làm hoặc chưa kiểm chứng:
+
+- **Không chạy `idf.py build`, không biên dịch bằng GCC cho ESP32-S3, không chạy trên phần cứng.** `uxTaskGetStackHighWaterMark` và `vTaskDelete` đã được dùng ở `http_app` và `wifi_app` (đã build và chạy), nhưng `screen_app.c` chưa biên dịch với header FreeRTOS thật.
+- `board_init_screen()` chưa từng chạy trên phần cứng: chưa biết bus I80 lên được không, chưa biết GPIO strapping 0, 3, 45, 46 có làm board boot sai không, chưa biết `max_transfer_bytes` 30720 làm driver I80 cấp thêm bao nhiêu RAM DMA (chưa đo), chưa biết stack 6144 có đủ cho khởi tạo bus I80 và chuỗi init panel (task in số còn trống để chỉnh).
+- Không có bảng lệnh riêng của panel (nguồn, gamma, mở khóa lệnh mở rộng): màn hình chạy với thiết lập mặc định của chip nên màu có thể nhạt hoặc sai gamma dù đã đúng thứ tự RGB. Trình tự reset chung LCD/touch (GPIO4) chưa xác minh.
+- `screen_hmi_fill_rect` chờ theo bước 1 ms bằng busy wait (giữ CPU); mỗi lần tô toàn màn hình gồm khoảng 80 khối 4 hàng. Giữa các màu có `sx_delay_ms(1500)` nhường CPU nên task wifi và http không bị đói, nhưng chưa quan sát thực tế khi cả ba task chạy cùng lúc. Chưa đo thời gian tô thật (log sẽ cho số này).
+- Backlight bật trước khi tô màu đầu tiên, nên vài trăm ms đầu màn hình có thể hiện nội dung bộ nhớ khung chưa xác định (nhiễu, trắng, hay đen); đây cũng là thông tin chẩn đoán (panel đã được cấp nguồn hay chưa), nên giữ nguyên thứ tự này.
+- Touch, loa, mic, SD chưa được gọi, `board_init_touch()` chưa chạy.
+
+Kế hoạch tiếp theo: xem mục 6 (việc đầu tiên của chủ dự án) và mục 7 (bước 3).
