@@ -9,7 +9,7 @@
 /* Device will active all of mode which include: STA &AP*/
 
 /*STA Mode*/
-#define DEFAULT_WIFI_SSID       "Log Terminal"
+#define DEFAULT_WIFI_SSID       "Log Terminal "
 #define DEFAULT_WIFI_PASSWORD   "locdeptrai"
 
 /*AP Mode*/
