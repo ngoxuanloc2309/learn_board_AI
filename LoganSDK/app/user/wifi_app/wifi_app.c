@@ -48,6 +48,7 @@ static const char *auth_name(sx_wifi_auth_t auth)
     }
 }
 
+#if APP_WIFI_SCAN_PERIOD_MS != 0U
 static uint32_t now_ms(void)
 {
     uint32_t ms = 0U;
@@ -55,6 +56,7 @@ static uint32_t now_ms(void)
     sx_get_time_ms(&ms);
     return ms;
 }
+#endif
 
 /* Static, so the task stack stays small. Only the Wi-Fi task uses it. */
 static sx_wifi_scan_entry_t s_scan_entries[SX_WIFI_SCAN_MAX_ENTRIES];
@@ -108,7 +110,9 @@ static void wifi_task(void *arg)
 {
     sx_wifi_config_t config;
     sx_wifi_status_t status;
+#if APP_WIFI_SCAN_PERIOD_MS != 0U
     uint32_t last_scan_ms;
+#endif
     int result;
 
     (void)arg;
@@ -134,7 +138,9 @@ static void wifi_task(void *arg)
            (unsigned)strlen(DEFAULT_WIFI_SSID), (unsigned)strlen(DEFAULT_WIFI_PASSWORD));
 
     run_scan();
+#if APP_WIFI_SCAN_PERIOD_MS != 0U
     last_scan_ms = now_ms();
+#endif
 
     for (;;) {
         if (sx_wifi_get_status(&status) == SX_WIFI_OK) {
@@ -142,12 +148,14 @@ static void wifi_task(void *arg)
                    sta_state_name(status.sta_state), status.sta_ip, (int)status.sta_rssi,
                    (unsigned)status.sta_last_reason, status.ap_ip, (unsigned)status.ap_clients);
 
+#if APP_WIFI_SCAN_PERIOD_MS != 0U
             /* Time is measured by subtraction, so it stays correct when the counter wraps. */
-            if ((APP_WIFI_SCAN_PERIOD_MS != 0U) && (status.sta_state != SX_WIFI_STA_GOT_IP) &&
+            if ((status.sta_state != SX_WIFI_STA_GOT_IP) &&
                 ((now_ms() - last_scan_ms) >= APP_WIFI_SCAN_PERIOD_MS)) {
                 run_scan();
                 last_scan_ms = now_ms();
             }
+#endif
         }
         sx_delay_ms(APP_WIFI_STATUS_PERIOD_MS);
     }
