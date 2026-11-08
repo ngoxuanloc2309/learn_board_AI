@@ -68,7 +68,7 @@ touch FT6336U/FT5x06 I2C, microSD SPI, speaker I2S có amp onboard, RS485 onboar
 - Địa chỉ I2C của touch, hướng màn hình, tốc độ pixel clock tối đa của ST7796 trên board này.
 - Các thời gian chờ trong `screenHMI` và `touch` (reset thấp 10 ms, chờ sau reset 120 ms, chờ sau SWRESET và SLPOUT 120 ms, chờ boot touch 300 ms): lấy theo thông lệ, chưa đối chiếu datasheet.
 - Bảng lệnh riêng của panel (nguồn, gamma, mở khóa lệnh mở rộng): chưa viết, cần nguồn đã xác minh cho đúng panel của board. Không có bảng này màn hình chạy với thiết lập mặc định của chip.
-- Giá trị MADCTL cho từng hướng, có đảo màu (INVON) hay không, thứ tự RGB/BGR: chưa xác minh trên board.
+- Giá trị MADCTL cho từng hướng, có đảo màu (INVON) hay không, thứ tự RGB/BGR: chưa xác minh trên board. (Cập nhật phiên 15: đã xác nhận bằng mắt, theo lời chủ dự án, với `MADCTL = MV | BGR`, đảo màu bật và `swap_color_bytes = true`, xem bổ sung 2 của phiên 15. Chưa có log, chưa đo.)
 - Bản đồ thanh ghi và ý nghĩa cờ sự kiện của touch (TD_STATUS 0x02, điểm đầu từ 0x03, ID 0xA3/0xA6/0xA8): theo bản đồ FocalTech thông dụng, chưa đối chiếu datasheet của chip trên board. Cực tính và chế độ chân INT chưa xác minh nên chưa dùng.
 
 - Cấu hình `sdkconfig` đang commit: flash `2MB`, `CONFIG_SPIRAM` chưa bật, `CONFIG_FREERTOS_HZ=100`. Đây là giá trị đang có trong file, **không phải** thông số đã xác minh của board (phiên 7 chỉ đọc file, chưa đối chiếu phần cứng).
@@ -371,6 +371,9 @@ Chưa làm hoặc chưa kiểm chứng:
 Cần chủ dự án làm:
 
 - (Mới, phiên 15) Build bản có `screen_app` (file đổi: `LoganSDK/app/app.c`, `LoganSDK/app/user/screen_app/screen_app.c`, `screen_app.h`, `docs/HandOver.md`), flash, rồi gửi: (a) log build, gồm cảnh báo của hai file `screen_app.c`, `app.c` và dòng kích thước `board_hmi_ai.bin` (bản phiên 13 là 0xb61f0; lần này `board.o`, `screenHMI`, `sx_i80`, `sx_pwm` sẽ vào bin nên bin lớn hơn); (b) log boot và các dòng `[screen] ...`; (c) mô tả bằng mắt từng bước: màn hình có sáng không, mỗi màu tô toàn màn hình trông ra sao (đối chiếu bảng ở nhật ký phiên 15), mẫu cuối có 4 góc đúng vị trí và viền trắng đủ 4 cạnh không, đen có ra đen không (nếu ra trắng thì cần `BOARD_LCD_INVERT = true`), có nhiễu hay sọc không; (d) board có boot đúng không (chân strapping GPIO 0, 3, 45, 46). Sau đó sửa macro `BOARD_LCD_MADCTL`, `BOARD_LCD_INVERT`, `BOARD_LCD_PCLK_HZ` trong `board.h` theo kết quả, hoặc gửi kết quả để phiên sau sửa.
+- (Mới, phiên 15, sau lần quan sát 1) Build lại với `BOARD_LCD_INVERT = true` (file đổi: `LoganSDK/board/board.h`, một dòng), flash, rồi gửi: log build và log boot, thứ tự màu ở bước tô (đỏ, xanh lá, xanh dương, trắng, đen), và **vị trí** từng màu ở bốn góc của mẫu cuối (xem bổ sung 1 của phiên 15). Hướng màn hình chưa xác định vì chưa biết vị trí các góc.
+- (Cập nhật sau lần quan sát 2) Việc trên đã xong về mặt hình ảnh (xem bổ sung 2 của phiên 15). Còn lại cho chủ dự án: gửi log serial của lần chạy (các dòng `[screen] ...`, đặc biệt thời gian tô và stack còn trống), báo viền trắng 2 px và ô trắng ở giữa có hiện đủ không, và cho biết có nhiễu hay sọc không.
+- (Cập nhật sau log lần 2) Đã nhận log serial và chủ dự án xác nhận viền trắng và ô giữa hiện đủ (xem bổ sung 3 của phiên 15). Còn thiếu: log build (cảnh báo, kích thước `board_hmi_ai.bin`) và phần đầu log boot (log dán bị cắt giữa dòng).
 - (Chủ dự án báo build phiên 14 không lỗi, chưa có log: còn cần cảnh báo ở `board.c` và dòng kích thước `board_hmi_ai.bin` so với 0xb61f0 nếu muốn xác nhận bin không đổi.) Build sau phiên 14 (file đổi: `LoganSDK/board/board.h`, `board.c`, `CMakeLists.txt`, `docs/Firmware_Construction.md`, `docs/HandOver.md`) và gửi log. Điểm cần xem: có cảnh báo hay lỗi nào ở `board.c`; `board` thêm `REQUIRES services` có tạo vòng phụ thuộc component không (kỳ vọng không, `services` không `REQUIRES board`); kích thước bin so với 0xb61f0 của phiên 13 (kỳ vọng gần như không đổi vì `app` chưa gọi hàm nào của `board`, linker có thể bỏ `board.o`).
 - Bring-up từng thiết bị (việc sau, khi bạn muốn): gọi `board_init()` rồi `board_init_screen()`, thử `screen_hmi_set_backlight` và `screen_hmi_fill_rect` với vài màu đã biết để kiểm tra hướng, thứ tự RGB/BGR, đảo màu và `pclk_hz`; sau đó `board_init_touch()`. Khi một giá trị `DESIGN` sai, sửa macro tương ứng trong `board.h`. Cần cho tôi biết chọn thiết bị nào làm trước và gửi log.
 - Chân GPIO 0, 3, 45, 46 (strapping) đang bị LCD dùng; nếu board không boot đúng sau khi `board_init_screen()` chạy, báo ngay kèm log boot.
@@ -759,3 +762,64 @@ Chưa làm hoặc chưa kiểm chứng:
 - Touch, loa, mic, SD chưa được gọi, `board_init_touch()` chưa chạy.
 
 Kế hoạch tiếp theo: xem mục 6 (việc đầu tiên của chủ dự án) và mục 7 (bước 3).
+
+### Phiên 15, bổ sung 1 (2026-11-08): kết quả quan sát lần 1 và sửa `BOARD_LCD_INVERT`
+
+Chủ dự án báo bằng lời (chưa có log serial, chưa có log build) là đã build, nạp bản có `screen_app` và màn hình sáng. Quan sát được:
+
+- Các lần tô toàn màn hình, theo thứ tự thời gian: xanh dương, tím, vàng, đen, trắng. Code tô theo thứ tự: đỏ, xanh lá, xanh dương, trắng, đen.
+- Mẫu cuối: nền trắng, bốn khối góc có màu xanh dương đậm (navy), xanh dương nhạt (cyan), vàng, tím (chưa báo vị trí từng khối), ô giữa màu đen. Chưa báo về viền 2 px.
+
+Kết luận từ quan sát (suy luận, chưa chạy lại trên board):
+
+- Màn hình đang hiện **đảo màu**. Trắng ra đen và đen ra trắng ở cả hai phần (các lần tô và mẫu cuối: nền đen thành trắng, ô giữa trắng thành đen). Trắng và đen không phụ thuộc thứ tự byte hay thứ tự màu, nên kết luận này không phụ thuộc vào các giả định khác.
+- Đã đọc code: `screenHMI.c` dòng 161 gửi `CMD_INVOFF` (0x20) khi `invert = false` và `CMD_INVON` (0x21) khi `invert = true`. Lúc quan sát `BOARD_LCD_INVERT = false`, tức panel hiện đảo màu dù đã gửi lệnh tắt đảo, nên cần gửi lệnh bật đảo.
+- Giả thuyết "đảo màu, thứ tự byte và thứ tự màu đều đúng" cho kết quả: đỏ ra lục lam (cyan), xanh lá ra tím đỏ (magenta), xanh dương ra vàng, trắng ra đen, đen ra trắng. Bốn khối góc: trên trái cyan, trên phải magenta, dưới trái vàng, dưới phải xanh dương thuần. Bốn khối góc quan sát (navy, cyan, vàng, tím) đúng là tập màu này (xanh dương thuần có thể được mô tả là navy). Ba trong bốn lần tô đầu (xanh lá, xanh dương, và hai màu trắng và đen) khớp đúng. Lần tô đầu (đỏ) được báo "xanh dương" trong khi giả thuyết cho cyan: **chưa rõ**, có thể là cyan được gọi là xanh dương. Lần chạy sau sẽ cho thấy.
+- Các giả thuyết khác (có đảo màu và thêm sai thứ tự byte, sai bit BGR hoặc sai cả hai) tính ra tập màu không khớp quan sát. Các phép tính này dùng RGB565, chưa kiểm chứng trên board.
+
+Đã sửa: `LoganSDK/board/board.h` dòng `BOARD_LCD_INVERT` từ `false` sang `true` (kèm comment ngắn). Không sửa file nào khác. **Chưa build, chưa chạy lại.**
+
+Dự kiến thấy sau khi sửa (nếu giả thuyết đúng): các lần tô là đỏ, xanh lá, xanh dương, trắng, đen; mẫu cuối nền đen, viền trắng, trên trái đỏ, trên phải xanh lá, dưới trái xanh dương, dưới phải vàng, ô giữa trắng. Nếu vị trí các góc khác danh sách này thì đối chiếu bảng hướng ở nhật ký phiên 15 để chọn bit `MX`, `MY`, `MV` trong `BOARD_LCD_MADCTL`.
+
+Cũng từ quan sát này: màn hình hiện màu theo đúng trình tự nên bus I80 ở 10 MHz và chuỗi khởi tạo đang chạy (theo lời chủ dự án). Chưa biết có nhiễu hay sọc, thời gian tô, stack còn trống, và việc board boot với các chân strapping (chưa có log).
+
+### Phiên 15, bổ sung 2 (2026-11-08): kết quả quan sát lần 2, màn hình đúng màu và đúng hướng
+
+Sau khi nạp bản có `BOARD_LCD_INVERT = true`, chủ dự án báo bằng lời (chưa có log serial, chưa có log build):
+
+- Các lần tô toàn màn hình theo thứ tự: đỏ, xanh lá, xanh dương, trắng, đen.
+- Mẫu cuối: nền đen, bốn góc đỏ (trên trái), xanh lá (trên phải), xanh dương (dưới trái), vàng (dưới phải). Chưa báo về viền trắng 2 px và ô trắng 40x40 ở giữa, nên hai phần này **chưa xác nhận**.
+
+Kết luận (quan sát bằng mắt, theo lời chủ dự án):
+
+- Khớp đúng dự kiến của bổ sung 1, nên giả thuyết đảo màu được xác nhận: `BOARD_LCD_INVERT = true` là đúng cho panel này.
+- Thứ tự màu (bit BGR) và thứ tự byte (`swap_color_bytes = true`) đúng: đỏ, xanh lá, xanh dương hiện đúng màu theo bảng ở nhật ký phiên 15.
+- Hướng đúng: bốn góc trùng vị trí dự kiến, nên `BOARD_LCD_MADCTL = SCREEN_HMI_MADCTL_MV | SCREEN_HMI_MADCTL_BGR` đúng cho hướng ngang với màn hình 480x320 và cạnh dài nằm ngang. Chưa kiểm cạnh nào là phía trên của board vật lý ngoài việc chủ dự án đang nhìn theo hướng chữ ngang.
+- Bus I80 ở 10 MHz chạy được và hiển thị đúng màu. Chưa thử tốc độ cao hơn nên chưa biết giới hạn `pclk_hz`.
+- Board boot được và chạy task `screen_app` dù LCD dùng các chân strapping GPIO 0, 3, 45, 46 (theo lời chủ dự án, chưa có log boot).
+
+Trạng thái nhãn: các chân LCD (D0..D7, WR, RS, RST, backlight) đã hoạt động thực tế với giá trị hiện tại, nhưng chúng vẫn mang nhãn `REF` (lấy từ tài liệu dòng WT32-SC01 Plus, không phải schematic V15) và `BOARD_PINMAP_VERIFIED` vẫn là 0. Việc hoạt động được là quan sát, không thay cho xác nhận bằng schematic. Không đổi nhãn nào trong code ở bổ sung này.
+
+Chưa biết: viền và ô giữa của mẫu cuối; thời gian mỗi lần tô và stack còn trống (cần log); có nhiễu, sọc hay màu nhạt do thiếu bảng lệnh panel không; giới hạn `pclk_hz`; hành vi khi wifi và http chạy cùng lúc với tô màn hình; touch, loa, mic, SD chưa gọi.
+
+Việc tiếp theo đề xuất (chờ chủ dự án chọn): (a) thử tăng `BOARD_LCD_PCLK_HZ` (ví dụ 20 MHz, giá trị do phiên này chọn, không có nguồn) và xem có nhiễu, sọc hay lỗi tô không, hoặc (b) sang bring-up touch (`board_init_touch()`, `touch_read_id`, `touch_read`). Nên có log của lần chạy này trước khi bắt đầu.
+
+### Phiên 15, bổ sung 3 (2026-11-08): log serial của lần chạy với `BOARD_LCD_INVERT = true`
+
+Chủ dự án xác nhận bằng lời: viền trắng và ô trắng ở giữa **có hiện** trên màn hình thật. Cùng với bổ sung 2, toàn bộ mẫu cuối đã được xác nhận bằng mắt.
+
+Số liệu đọc từ log (đây là số đo thật của lần chạy, không phải suy đoán):
+
+- Dòng `panel up`: `size=480x320 madctl=0x28 invert=on pclk=10000000 Hz`. Không có dòng lỗi nào của `[screen]`: mọi lần tô trả OK, `set_backlight` OK.
+- Thời gian tô toàn màn hình (480x320): 84, 84, 86, 85, 85 ms cho năm màu, 85 ms cho nền của mẫu. Khối 120x80: 5 đến 6 ms. Viền: 1 đến 2 ms. Ô giữa 40x40: 1 ms.
+- Đọc code `screenHMI.c`: `fill_rect` chia khối theo hàng (`rows_per_chunk = 1920 / width`) và chờ mỗi khối bằng vòng `delay_ms(1U)` (dòng 311). Toàn màn hình có 80 khối, khối 120x80 có 5 khối, các phần nhỏ có 1 khối. Thời gian đo được xấp xỉ 1 ms mỗi khối ở cả ba trường hợp, nên **thời gian tô bị giới hạn bởi bước chờ 1 ms, không phải bởi pclk**. Hệ quả: tăng `BOARD_LCD_PCLK_HZ` sẽ không làm số ms trong log giảm đáng kể; kiểm tra giới hạn pclk phải dựa vào quan sát nhiễu hoặc sọc trên màn hình. Thời gian truyền thuần trên dây (bus 8 bit, 10 MHz, 307200 byte) khoảng 31 ms là phép tính, chưa đo. Đây không phải lỗi của bring-up; khi làm LVGL nên chờ bằng callback hoàn tất của bus thay vì chờ từng 1 ms (việc sau, chưa làm).
+- Stack của `screen_app`: còn trống thấp nhất 3884 trên 6144 byte, tức đỉnh dùng khoảng 2260 byte. Giữ nguyên 6144, không chỉnh.
+- Wi-Fi: quét thấy 20 mạng, lần nối đầu báo `reason=205` rồi lần thử kế tiếp nối được (khoảng 12,5 s sau khi boot), `sta ip: 192.168.30.100`. Hiện tượng `reason=205` ở lần nối đầu đã được ghi ở phần trước của HandOver, không phải do `screen_app`.
+- HTTP: `GET https://example.com/` trả `result=0`, `status=200`, 577 byte, 2549 ms; stack http còn trống thấp nhất 4572 trên 8192 byte. Wi-Fi, HTTP và `screen_app` chạy đồng thời, không thấy xung đột trong log này.
+- Heap: trước HTTPS 250176 byte trống, sau 248972; thấp nhất từ lúc boot 241692 trước và 208460 sau. So với số đo trước khi có màn hình (257980, 256984, 255272, 215620) thì thấp hơn khoảng 7 KB. Nhiều khả năng do bus I80, bộ mô tả DMA và `board_init()`, nhưng chưa tách riêng nên chưa kết luận.
+
+Log dán lên bị cắt: dòng đầu là `esp_image: segment 4 ...` dính vào dòng `[screen] panel up` (mất đoạn boot ở giữa), và chưa có log build. Vì vậy **chưa biết** cảnh báo khi build, kích thước bin, lý do reset, và các dòng boot liên quan tới chân strapping. Việc board boot rồi chạy tới `screen_app` là bằng chứng gián tiếp là boot không hỏng.
+
+Trạng thái bring-up màn hình: màu, thứ tự màu, đảo màu, hướng, viền, ô giữa đã xác nhận bằng mắt (theo lời chủ dự án) ở 10 MHz, và log không có lỗi. Chưa xác nhận: giới hạn `pclk_hz`, có nhiễu hay sọc không (chủ dự án chưa nhắc), độ đúng của gamma (không có bảng lệnh panel). Nhãn chân vẫn `REF`, `BOARD_PINMAP_VERIFIED = 0`.
+
+Đề xuất bước tiếp theo: bring-up touch (`board_init_touch()`, `touch_read_id`, `touch_read`). Các chân touch (I2C, ngắt, reset dùng chung GPIO 4 với LCD) cũng là `REF` từ tài liệu dòng WT32-SC01 Plus. Các chân LCD lấy từ cùng tài liệu đã chạy đúng, nhưng điều đó không bảo đảm chân touch đúng trên bản V15. Cần chủ dự án xác nhận trước khi bắt đầu.

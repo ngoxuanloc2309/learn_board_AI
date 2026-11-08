@@ -69,7 +69,7 @@ typedef enum{
 #define BOARD_LCD_PCLK_HZ           10000000U   /* conservative, the panel maximum is not verified */
 #define BOARD_LCD_MAX_TRANSFER      30720U      /* bytes, 480 x 32 pixels of RGB565 */
 #define BOARD_LCD_MADCTL            (SCREEN_HMI_MADCTL_MV | SCREEN_HMI_MADCTL_BGR)
-#define BOARD_LCD_INVERT            false
+#define BOARD_LCD_INVERT            true        /* session 15: with false the owner saw black and white swapped */
 #define BOARD_BACKLIGHT_TIMER       0
 #define BOARD_BACKLIGHT_CHANNEL     0
 #define BOARD_BACKLIGHT_FREQ_HZ     5000U
