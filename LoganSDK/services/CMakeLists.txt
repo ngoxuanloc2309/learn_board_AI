@@ -8,4 +8,4 @@ idf_component_register(SRCS "AI/AI_backend.c"
                             "storage/storage_diskio.c"
                     INCLUDE_DIRS "AI" "http" "storage"
                     REQUIRES modules utils
-                    PRIV_REQUIRES libs)
+                    PRIV_REQUIRES libs esp_http_client esp-tls)

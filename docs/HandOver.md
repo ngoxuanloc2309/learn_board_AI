@@ -1,7 +1,7 @@
 # Handover - AI Learning Device
 
 > File này do mọi phiên làm việc (Claude hoặc AI khác) cập nhật ở cuối phiên. Quy tắc: xem `RuleCode.md` mục 3.
-> Cập nhật lần cuối: 2026-11-07 (phiên 10).
+> Cập nhật lần cuối: 2026-11-08 (phiên 11).
 
 ## 1. Đọc trước khi làm
 
@@ -35,11 +35,13 @@
 | Module `speaker` (`components/modules/speaker`) | Phiên 10: loa I2S TX trên `sx_i2s`, chỉ phát. Người gọi đưa vào PCM mono 16 bit; module gửi cùng mẫu ra cả slot trái và phải (frame stereo 16 bit) vì chân chọn kênh của amp chưa xác minh. Volume tuyến tính 0 đến 100 phần trăm (mặc định 50, chọn theo thiết kế, chưa đo). API: `speaker_init/deinit/start/stop/set_volume/write`. **Đã chạy trên máy host** (`sx_i2s` giả lập, ASan, UBSan, biên dịch sạch `-Wall -Wextra -Wshadow -Wconversion -Wsign-conversion -Wpedantic -Werror`, 8 đột biến đều bị bắt). **Chưa `idf.py build`, chưa biên dịch bằng GCC cho ESP32-S3, chưa chạy trên phần cứng**, chưa có ai gọi (chưa có `board_init()`). Thư mục `modules/storage` không còn: storage đã chuyển lên `services/` (xem dòng dưới) |
 | Module `screenHMI` (`modules/screenHMI`) | Phiên 6: ST7796 qua `sx_i80`, reset qua `sx_gpio`, backlight PWM qua `sx_pwm`. Chỉ gửi lệnh MIPI DCS chuẩn; bảng lệnh riêng của panel do board truyền vào. **Đã chạy trên máy host** (hợp đồng `sx_*` giả lập) và biên dịch sạch bằng GCC 14.2 cho ESP32-S3. Đã build trong dự án ở sandbox (phiên 6, không có cảnh báo biên dịch từ code dự án); **chưa chạy trên phần cứng** |
 | Module `touch` (`modules/touch`) | Phiên 6: FT6x36/FT5x06 (FT6336U) qua `sx_i2c`, chỉ đọc thanh ghi, dùng polling (không dùng chân INT). Kiểm chứng giống `screenHMI`. Đã build trong dự án ở sandbox (phiên 6, không có cảnh báo biên dịch từ code dự án); **chưa chạy trên phần cứng** |
-| Services (http, AI) | Chỉ là file rỗng |
+| Peripheral `sx_wifi` (`peripherals/wifi`, `platform/esp32s3/wifi`) | Phiên 11: hợp đồng và hiện thực Wi-Fi cho STA, AP hoặc APSTA cùng lúc. AP có IP tĩnh do config đặt (đã chốt `192.168.4.1`, netmask 255.255.255.0, gateway = IP của AP, DHCP server của chip), STA dùng DHCP, tự thử nối lại sau mỗi lần mất kết nối. API: `sx_wifi_init/deinit/start/stop/wait_ip/get_status` kèm callback sự kiện. **Đã chạy trên máy host** (ESP-IDF giả lập, ASan, UBSan, 121 check, biên dịch sạch `-Wall -Wextra -Wshadow -Wconversion -Wsign-conversion -Wpedantic -Werror`, 8 đột biến đều bị bắt). **Chưa `idf.py build`, chưa chạy với router thật, chưa chạy trên phần cứng**, chưa có ai gọi (chưa có `board_init()`) |
+| Service `http` (`services/http`) | Phiên 11: client HTTP/HTTPS chặn (blocking), một yêu cầu một lần gọi: `http_svc_perform`. Dùng `esp_http_client`; HTTPS luôn kiểm chứng chứng chỉ (CA bundle của firmware, hoặc PEM do người gọi đưa), không có cách tắt. Không theo redirect. **Đã chạy trên máy host** (`esp_http_client` giả lập, ASan, UBSan, 61 check, biên dịch sạch cờ nghiêm ngặt, 6 đột biến đều bị bắt). **Chưa `idf.py build`, chưa gọi server thật** |
+| Service `AI` (`AI_backend`, `AI_frontend`) | Chỉ là file rỗng. Chủ dự án để phần backend AI lại sau (chưa có đặc tả backend: URL, endpoint, JSON, xác thực) |
 | Service `storage` (`services/storage`) | Phiên 6: API file trên thẻ SD (mount, open/read/write/seek, list, mkdir, remove, rename, đọc/ghi cả file), nối FatFs vào `sdcard` qua `storage_diskio.c`. **Đã chạy trên máy host** (FatFs thật, thẻ SD giả lập bằng RAM, ASan và UBSan, 0 lỗi) và biên dịch sạch với `-Wall -Wextra -Wshadow -Wconversion -Wsign-conversion -Wpedantic`. Chủ dự án đã chạy `idf.py build` thành công cho esp32s3 (phiên 6). Chưa thử với thẻ thật, chưa chạy trên phần cứng. Lưu ý: `app_init()` chưa được ai gọi nên linker có thể bỏ code storage, kích thước bin chưa phản ánh chi phí thật của FatFs Chưa có `board_init()` nên chưa có code gọi `storage_init` |
 | `libs/` (FatFs R0.16 của ChaN, cJSON) | Phiên 6: `libs/CMakeLists.txt` đăng ký component `libs` chỉ build FatFs (`ff.c`, `ffsystem.c`, `ffunicode.c`). cJSON nằm trong thư mục nhưng **chưa build**. Không dùng component `fatfs` của ESP-IDF |
 | App tasks | Chỉ là file rỗng. `app_start()` và `board_init()` **chưa tồn tại**; `app_main()` rỗng |
-| LVGL, Wi-Fi, OTA | Chưa bắt đầu |
+| LVGL, OTA | Chưa bắt đầu |
 
 ### Kiến trúc (tóm tắt, chi tiết ở Firmware_Construction.md)
 
@@ -366,6 +368,8 @@ Cần chủ dự án làm:
 
 - Chạy `idf.py build` trên máy của mình sau commit `aa0d00c` (lần build đầu có `sx_time`, `screenHMI`, `touch` trên máy chủ dự án). Lưu ý đã gặp ở phiên 6: biến môi trường `IDF_TARGET=esp32` trong shell làm `set-target esp32s3` báo lệch; lệnh `idf.py set-target esp32-s3` chạy được.
 - Chạy `idf.py build` sau phiên 8 (file đổi: `sx_i2s.h`, `esp32s3_i2s.c`, `modules/micro/inmp441.h`, `inmp441.c`, `modules/CMakeLists.txt`) và báo lỗi nếu có.
+- Sửa `LoganSDK/app/app_config.h`: `DEFAULT_STATIC_IP` đổi từ `"192.168.1.1"` sang `"192.168.4.1"` (chủ dự án nói sẽ tự đổi; cuối phiên 11 file vẫn là `192.168.1.1`, phiên này không sửa file này). Nhớ rằng AP và router không được cùng dải mạng.
+- Chạy `idf.py build` sau phiên 11 (file đổi: `peripherals/wifi/sx_wifi.h`, `platform/esp32s3/wifi/esp32s3_wifi.c`, `services/http/http.h`, `http.c`, `peripherals/CMakeLists.txt`, `platform/esp32s3/CMakeLists.txt`, `services/CMakeLists.txt`) và gửi log. Cần xem kích thước bin so với phân vùng app 1 MB (xem rủi ro ở nhật ký phiên 11). Vì chưa ai gọi `sx_wifi_*` và `http_svc_perform`, linker có thể bỏ chúng nên kích thước chưa phản ánh chi phí thật.
 - Chạy `idf.py build` sau phiên 10 (file đổi: `modules/speaker/speaker.h`, `speaker.c`, `peripherals/i2s/sx_i2s.h`, `platform/esp32s3/i2s/esp32s3_i2s.c`) và báo lỗi nếu có. Sau đó có thể bỏ `speaker.c` khỏi nhóm file rỗng cần dọn.
 - Xác nhận nguồn 3.3V cho INMP441 (header mở rộng không có 3.3V; chân +3.3V ở header debug ghi là chỉ tham khảo).
 - Cung cấp schematic V15 hoặc kết quả xác minh: chân LCD, touch, SD, I2S, RS485, loại PSRAM và dung lượng Flash, có microphone hay không (xem mục 4).
@@ -375,6 +379,14 @@ Dọn tùy chọn, chờ chủ dự án duyệt (không nằm trong `SRCS`, khô
 - `LoganSDK/components/peripherals/{gpio/sx_gpio.c,i2c/sx_i2c.c,i2s/sx_i2s.c,i80/sx_i80.c,spi/sx_spi.c}` (file rỗng).
 - `LoganSDK/platform/CMakeLists.txt` (cũ, không phải component) và `LoganSDK/CMakeLists.txt` (0 byte).
 - `LoganSDK/platform/esp32s3/{gpio/esp32s3_gpio.h,i2c/esp32s3_i2c.h,i80/esp32s3_i80.h,spi/esp32s3_spi.h}` (file rỗng, nằm trong thư mục có trong `INCLUDE_DIRS`).
+
+Quyết định còn mở (thêm ở phiên 11):
+
+- Đặc tả backend AI (URL, endpoint, định dạng JSON hoặc audio, xác thực, TLS, STT/TTS) để viết `AI_backend`. `AI_backend` và `AI_frontend` khác nhau thế nào cũng chưa được trả lời.
+- Trang web cấu hình Wi-Fi qua AP (cần thêm `esp_http_server` và chỗ lưu SSID, mật khẩu như NVS hoặc thẻ SD): chủ dự án nói chưa cần ở giai đoạn này.
+- `sx_wifi_init` xóa cả phân vùng NVS khi `nvs_flash_init` báo đầy hoặc sai phiên bản (mẫu chuẩn của ESP-IDF). Nếu sau này code khác lưu dữ liệu trong NVS thì cần đổi cách xử lý.
+- Nếu `idf.py build` báo vượt phân vùng app 1 MB: cần chủ dự án quyết định đổi partition (phiên 11 không tự đổi).
+- CA bundle đang là `CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y` (đọc từ `sdkconfig`), tốn flash. Có thể đổi sang bộ nhỏ hơn hoặc chỉ dùng PEM của backend (`ca_cert_pem`) nếu cần tiết kiệm; chưa đo.
 
 Quyết định còn mở (thêm ở phiên 10, chờ chủ dự án trả lời trước khi khôi phục `board.h`):
 
@@ -407,7 +419,8 @@ Thứ tự đề xuất (mỗi bước phải build được trước khi sang b
 2a. Theo chỉ đạo của chủ dự án (phiên 10): sau `speaker` là viết phần service, rồi mới viết app. Chưa chốt service nào (xem mục 6). `board.h`, `board_init()`, `app_start()` vẫn cần có trước khi bất kỳ instance nào (speaker, mic, màn hình, touch, SD) được tạo và chạy.
 2b. `storage_app` (task duy nhất gọi `storage_*`), sau khi có `board_init()` tạo `sdcard_t`, `sdcard_config_t`, `storage_config_t`.
 3. Bring-up trên phần cứng (chủ dự án chạy build và flash): xác minh Flash/PSRAM, chân, LCD hiển thị, touch đọc được, SD mount, speaker ra tiếng, thử mic.
-4. LVGL (flush callback, đọc input từ touch), Wi-Fi, http, OTA: chưa bắt đầu. Sau đó theo roadmap trong `Product_Construction.md`.
+4. Wi-Fi (`sx_wifi`) và `services/http` đã viết ở phiên 11 (chờ build của chủ dự án). Còn lại: LVGL (flush callback, đọc input từ touch), OTA, và phần AI (chờ đặc tả backend). Sau đó theo roadmap trong `Product_Construction.md`.
+4a. Phiên sau (nếu chủ dự án đã build xong phiên 11): `AI_backend` theo đặc tả backend; cần có `board_init()` hoặc một chỗ do app sở hữu để gọi `sx_wifi_init` và `sx_wifi_start` với `DEFAULT_*` trong `app_config.h`. Chưa chốt chương trình app nào sở hữu Wi-Fi (`http_app`, một `wifi_app` mới, hay `board`).
 
 ## 8. Ghi chú môi trường (cho phiên chạy trong sandbox)
 
@@ -462,3 +475,45 @@ Chưa làm hoặc chưa kiểm chứng:
 - Volume tuyến tính, chưa có đường cong theo độ to cảm nhận. Chưa có phát hiện clip hay giới hạn công suất.
 - Chưa kiểm tra loa và mic chạy cùng lúc (loa dự kiến cổng 0, mic cổng 1).
 - `board.h`, `board_init()`, `app_start()`, service, app: chưa làm.
+
+
+### Phiên 11 (2026-11-08)
+
+Đầu phiên: clone repo (HEAD `c02d469`), đọc `HandOver.md`, `RuleCode.md`, `RuleAgent.md`, `Firmware_Construction.md` và các phần liên quan của `Product_Construction.md`, đối chiếu repo. Nhiệm vụ: viết xong driver Wi-Fi, sau đó services http và AI; chỉ kiểm tra logic rồi present file, chủ dự án tự build và gửi log.
+
+Lệch phát hiện khi đối chiếu:
+
+- Có 4 commit sau `ae9e5f5` chưa nằm trong handover: `9ecb73b`, `41ad749` ("default wifi & static IP"), `2d5db6e` ("add wifi"), `c02d469` ("add exoskeleton wifi"). Phần Wi-Fi mới chỉ là khung: `sx_wifi.h` rỗng, `esp32s3_wifi.c` chỉ có một dòng `#include "sx_wifi.h"`, cả hai chưa được đăng ký trong CMake; `app_config.h` có `DEFAULT_WIFI_SSID/PASSWORD`, `DEFAULT_AP_SSID/PASSWORD`, `DEFAULT_STATIC_IP "192.168.1.1"`. Handover phiên 10 và `speaker` đã nằm trong repo.
+- `board.h` vẫn là stub, chưa có `board_init()` và `app_start()`. `http.c`, `http.h`, `AI_backend.c`, `AI_frontend.*` rỗng, `AI_backend.h` chỉ có guard. Chưa có kết quả build sau phiên 10.
+- Tên file tài liệu thật là `HandOver.md`, `RuleCode.md` (không phải `handover.md`, `rule_code.md`).
+
+Đã chốt với chủ dự án:
+
+- Backend AI để sau (phiên này không viết `AI_backend`, `AI_frontend`).
+- Chế độ APSTA (STA và AP cùng lúc). AP tĩnh `192.168.4.1`, STA dùng DHCP. Đổi từ `192.168.1.1` vì dải đó dễ trùng router nhà. Chưa làm trang web cấu hình.
+- Chấp nhận thêm component có sẵn của ESP-IDF: `esp_wifi`, `esp_netif`, `esp_event`, `nvs_flash` (cho `platform/esp32s3`), `esp_http_client`, `esp-tls` (cho `services`). Chấp nhận rủi ro dung lượng flash (xem dưới).
+
+Đã làm:
+
+- `LoganSDK/components/peripherals/wifi/sx_wifi.h` (viết vào file rỗng): hợp đồng. Cấu hình `sx_wifi_config_t`: `mode` (STA, AP, APSTA), `sta_ssid`, `sta_password`, `sta_retry_ms` (0 là 5000, chọn theo thiết kế, chưa đo), `ap_ssid`, `ap_password`, `ap_ip` (chuỗi), `ap_max_clients` (0 là 4, tối đa 8), `callback`, `callback_context`. Chuỗi được sao chép khi init. Một instance duy nhất. Mật khẩu rỗng hoặc NULL là mạng mở, ngược lại 8 đến 63 ký tự. IP của AP phải có octet cuối từ 1 đến 254, octet đầu khác 0, 127 và từ 224 trở lên. Không có tham số kênh AP: AP bắt đầu ở kênh 1 và theo kênh router khi STA nối (clients của AP có thể rớt thoáng qua). Callback chạy trong task sự kiện hệ thống, không được chặn và không được gọi `wait_ip/start/stop/deinit` từ đó.
+- `LoganSDK/platform/esp32s3/wifi/esp32s3_wifi.c` (viết vào file đã có một dòng): hiện thực. Init: kiểm tra config, `nvs_flash_init` (xóa và init lại khi đầy hoặc sai phiên bản), `esp_netif_init`, vòng lặp sự kiện mặc định (đã tồn tại thì bỏ qua lỗi), tạo netif mặc định cho STA và AP theo mode, đặt IP tĩnh AP (dừng DHCP server, `esp_netif_set_ip_info`, bật lại), `esp_wifi_init`, `esp_wifi_set_storage(WIFI_STORAGE_RAM)` (cấu hình lấy từ config mỗi lần khởi động nên không ghi flash), đặt mode và cấu hình, đăng ký handler cho `WIFI_EVENT` và `IP_EVENT`, tạo timer thử nối lại. Mọi lỗi giữa chừng đều hoàn tác (`release_all`). `start` đặt cờ `running` trước `esp_wifi_start` vì sự kiện start có thể đến trước khi hàm trả về. Mất kết nối: ghi mã lý do, xóa IP và cờ `wait_ip`, gọi callback, hẹn nối lại bằng `esp_timer`; không hẹn khi `running` đã tắt. `wait_ip` làm tròn lên số tick. Định dạng IP viết tay (không `snprintf`) vì task sự kiện hệ thống chỉ có stack 2304 byte (`CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE` trong `sdkconfig`). Tên hàm và logic dùng trạng thái tĩnh, nên chỉ một instance.
+- `LoganSDK/services/http/http.h`, `http.c` (viết vào file rỗng): `http_svc_perform` (một yêu cầu chặn, không giữ trạng thái giữa các lần gọi). Phương thức GET, POST, PUT, DELETE; header tùy ý; thân yêu cầu chỉ cho POST và PUT; buffer phản hồi do người gọi cấp (NULL thì bỏ qua thân); có byte 0 kết thúc nếu còn chỗ; thân quá lớn trả `HTTP_SVC_ERR_OVERFLOW` kèm status và phần đầu; status HTTP bất kỳ vẫn là `HTTP_SVC_OK` của lần gọi (người gọi kiểm tra `status`); không theo redirect; timeout mỗi bước mặc định 10000 ms (chọn theo thiết kế, chưa đo). Dùng luồng `esp_http_client_open`, `fetch_headers`, `read`, nên phản hồi phải có Content-Length hoặc chunked (thân kết thúc bằng đóng kết nối được báo là `HTTP_SVC_ERR_NET`). HTTPS luôn kiểm chứng chứng chỉ; không có tùy chọn bỏ kiểm chứng. Không đụng đến Wi-Fi: chưa có mạng thì trả `HTTP_SVC_ERR_NET`.
+- CMake: `peripherals` thêm thư mục `wifi`; `platform/esp32s3` thêm `wifi/esp32s3_wifi.c` và `PRIV_REQUIRES esp_wifi esp_netif esp_event nvs_flash`; `services` thêm `PRIV_REQUIRES esp_http_client esp-tls` (`mbedtls` và `esp_crt_bundle.h` đi qua `esp-tls`, dựa vào `REQUIRES mbedtls` của `esp-tls` trong v5.4.3).
+- `docs/Firmware_Construction.md`: thêm dòng `sx_wifi` vào bảng mục 8.
+- Không sửa `app_config.h`, `board.h`, `app`, `AI_backend`, `AI_frontend`.
+
+Đã kiểm chứng:
+
+- Đối chiếu header và mã nguồn ESP-IDF v5.4.3 (tải từ github): `esp_wifi.h`, `esp_wifi_types_generic.h`, `esp_wifi_default.h`, `esp_netif.h`, `esp_netif_types.h`, `esp_netif_ip_addr.h`, `esp_netif_lwip.c`, `esp_event.h`, `esp_timer.h`, `nvs_flash.h`, `nvs.h`, `esp_http_client.h`, `esp_crt_bundle.h`, `CMakeLists.txt` của `esp_wifi`, `esp_http_client`, `esp-tls`. Điểm đáng chú ý: `esp_netif_create_default_wifi_sta/ap` abort khi lỗi chứ không trả mã lỗi; DHCP server của AP: dừng, `set_ip_info` (chỉ cho khi đã dừng), bật lại, và khi AP chưa chạy thì server thật sự khởi động lúc AP start với địa chỉ mới (đọc `esp_netif_lwip.c`); `esp_http_client_read` trả -`ESP_ERR_HTTP_EAGAIN` khi timeout, và `esp_http_client_is_complete_data_received` dùng để phân biệt hết dữ liệu với bị cắt.
+- Chạy trên máy host (ASan và UBSan, `-fno-sanitize-recover=all`), ESP-IDF giả lập; mô hình trạng thái DHCP server giả lập sao theo `esp_netif_lwip.c` (nên chuỗi sai thứ tự bị bắt). `sx_wifi`: 121 check, 0 lỗi: kiểm tra tham số (kể cả IP biên), cấu hình đưa cho driver (SSID, mật khẩu, auth, kênh, số client, PMF), thứ tự gọi DHCP, luồng STA (nối, có IP, mất IP, mất kết nối, hẹn lại, timer lỡ gọi, nối lại thất bại tức thì), dừng không hẹn lại, đếm client AP không xuống dưới 0, rollback ở từng bước lỗi (NVS đầy, vòng lặp sự kiện, đặt IP, `esp_wifi_init`, đăng ký handler, `start`), `deinit` rồi `init` lại, làm tròn tick, định dạng IP ở các biên (255, 100, 101). Thử 8 đột biến (bỏ `dhcps_stop`, bỏ hẹn lại, quên tắt `running` khi stop, không làm tròn tick, đếm client xuống âm, bỏ hoàn tác netif, không bật cờ có IP, đặt `running` sau `start`): cả 8 bị bắt. `http`: 61 check, 0 lỗi: tham số, GET, POST ghi từng mẩu nhỏ, thân vừa khít bộ đệm, tràn, đọc từng mẩu nhỏ, status 404 và 302 không phải lỗi, HTTPS dùng bundle, HTTPS dùng PEM riêng, HTTP không dùng bundle, timeout mặc định và tùy chỉnh, mọi đường lỗi đều gọi `close` và `cleanup` đúng một lần, ghi 0 byte không lặp vô hạn, server đóng sớm. 6 đột biến (bỏ cleanup, bỏ thăm dò tràn, bỏ kiểm tra ghi 0 byte (treo, bị timeout chặn), tắt bundle, chấp nhận đóng sớm, bỏ byte 0) đều bị bắt. Bài test và bản giả lập nằm ngoài repo (không commit); giả lập chỉ chứng minh logic khớp mô hình do chính phiên này viết. Lần chạy đầu của test http có 1 lỗi nằm ở bản giả lập (không mô phỏng được ghi 0 byte), đã sửa bản giả lập, code production không đổi.
+- Biên dịch sạch hai file production trên host với `-Wall -Wextra -Wshadow -Wconversion -Wsign-conversion -Wpedantic -Werror -Wmissing-prototypes -Wstrict-prototypes` (header giả lập).
+
+Chưa làm hoặc chưa kiểm chứng:
+
+- **Không chạy `idf.py build`** (chủ dự án tự build). Hai file chưa biên dịch với header ESP-IDF thật hay bằng GCC cho ESP32-S3; chỉ đối chiếu tên hàm, tên trường và kiểu bằng cách đọc header v5.4.3. Cách dùng `portENTER_CRITICAL(&mux)` với `portMUX_TYPE` và `xEventGroupCreateStatic` trong v5.4.3 chỉ dựa trên hiểu biết, chưa đọc header.
+- Chưa chạy trên phần cứng, chưa nối router thật, chưa thử cấp IP cho client qua AP, chưa kiểm tra STA với router WPA3 thuần hoặc WEP (mật khẩu phải 8 đến 63 ký tự, ngưỡng auth của STA để mặc định của driver). Hành vi AP đổi kênh theo router và việc client rớt khi đó chưa kiểm tra thực tế. Chưa kiểm tra chế độ tiết kiệm điện mặc định của Wi-Fi (chưa gọi `esp_wifi_set_ps`).
+- `esp_netif_create_default_wifi_*` abort khi lỗi (thường chỉ khi hết bộ nhớ); `sx_wifi_init` không bắt được trường hợp đó. Stack của task sự kiện hệ thống 2304 byte dùng chung với handler mặc định của ESP-IDF và callback của người dùng: nếu tràn stack thì tăng `CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE`.
+- Kích thước bin: Wi-Fi, lwIP, TLS và CA bundle FULL sẽ làm bin to lên đáng kể so với 0x2e050 byte hiện tại; chưa đo. Phân vùng app 1 MB, flash 2 MB (theo `sdkconfig`). RAM trong khi chưa bật PSRAM: TLS và APSTA đều tốn RAM nội, chưa đo.
+- `http`: chưa gọi server thật, chưa thử chứng chỉ thật, chưa thử response không có Content-Length và không chunked (cố ý báo lỗi), chưa có API truyền thân lớn theo dòng (ví dụ audio TTS) mà phần AI sau này có thể cần. Mỗi lần gọi tạo client mới, kết nối không dùng lại.
+- `sx_wifi` và `http_svc_perform` chưa có ai gọi; chưa có chỗ app sở hữu Wi-Fi (xem mục 7 bước 4a). Không thread-safe cho các lệnh vòng đời (init, deinit, start, stop), ghi trong hợp đồng.
+- Phần AI chưa làm (để sau theo chủ dự án).
