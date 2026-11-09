@@ -1,4 +1,5 @@
 #include "app.h"
+#include "audio_app.h"
 #include "http_app.h"
 #include "screen_app.h"
 #include "wifi_app.h"
@@ -11,4 +12,10 @@ void app_start(void)
     (void)http_app_start();
     /* screen_app brings up the display by itself in its own task (board_init is called there). */
     (void)screen_app_start();
+    /*
+     * audio_app is the speaker and microphone bring-up test (board_init is called there too, it is safe
+     * to call twice). It plays three tones, shows a microphone level meter and plays back a recording,
+     * once per boot. Remove this call when the test is no longer needed.
+     */
+    (void)audio_app_start();
 }
