@@ -1,7 +1,8 @@
 #include "app.h"
-#include "audio_app.h"
 #include "http_app.h"
+#include "mic_app.h"
 #include "screen_app.h"
+#include "speaker_app.h"
 #include "wifi_app.h"
 
 void app_start(void)
@@ -13,9 +14,11 @@ void app_start(void)
     /* screen_app brings up the display by itself in its own task (board_init is called there). */
     (void)screen_app_start();
     /*
-     * audio_app is the speaker and microphone bring-up test (board_init is called there too, it is safe
-     * to call twice). It plays three tones, shows a microphone level meter and plays back a recording,
-     * once per boot. Remove this call when the test is no longer needed.
+     * speaker_app and mic_app are the speaker and microphone bring-up tests. Each calls board_init
+     * by itself (it is safe to call twice). speaker_app plays three tones once per boot. mic_app
+     * waits until that test is over, then shows a microphone level meter and plays back a
+     * recording. Remove both calls when the tests are no longer needed.
      */
-    (void)audio_app_start();
+    (void)speaker_app_start();
+    (void)mic_app_start();
 }
