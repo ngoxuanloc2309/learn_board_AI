@@ -40,7 +40,7 @@
 | Service `AI` (`AI_backend`, `AI_frontend`) | Chỉ là file rỗng. Chủ dự án để phần backend AI lại sau (chưa có đặc tả backend: URL, endpoint, JSON, xác thực) |
 | Service `storage` (`services/storage`) | Phiên 6: API file trên thẻ SD (mount, open/read/write/seek, list, mkdir, remove, rename, đọc/ghi cả file), nối FatFs vào `sdcard` qua `storage_diskio.c`. **Đã chạy trên máy host** (FatFs thật, thẻ SD giả lập bằng RAM, ASan và UBSan, 0 lỗi) và biên dịch sạch với `-Wall -Wextra -Wshadow -Wconversion -Wsign-conversion -Wpedantic`. Chủ dự án đã chạy `idf.py build` thành công cho esp32s3 (phiên 6). Chưa thử với thẻ thật, chưa chạy trên phần cứng. Lưu ý: `app_init()` chưa được ai gọi nên linker có thể bỏ code storage, kích thước bin chưa phản ánh chi phí thật của FatFs Chưa có `board_init()` nên chưa có code gọi `storage_init` |
 | `libs/` (FatFs R0.16 của ChaN, cJSON) | Phiên 6: `libs/CMakeLists.txt` đăng ký component `libs` chỉ build FatFs (`ff.c`, `ffsystem.c`, `ffunicode.c`). cJSON nằm trong thư mục nhưng **chưa build**. Không dùng component `fatfs` của ESP-IDF |
-| App tasks | `app_start()` có (gọi `wifi_app_start()`), `app_main()` gọi `app_start()`. `wifi_app` chạy trên phần cứng ở mức Wi-Fi (xem dòng `sx_wifi`), phiên 12 thêm quét chẩn đoán vào `wifi_app`. Phiên 13 thêm `http_app` (task chờ IP rồi gửi một GET thử; đã chạy trên phần cứng, xem dòng `http`). Phiên 15 thêm `screen_app` (task bring-up màn hình, xem nhật ký phiên 15; **chưa build, chưa chạy trên phần cứng**). Các app khác (`AI_app`, `ntp_app`, `speaker_app`, `storage_app`) vẫn là file rỗng hoặc chỉ có header. `board_init()` có từ phiên 14; từ phiên 15 nó được gọi **bên trong task của `screen_app`**, còn `app_start()` tự nó không gọi `board_init()` (`app_start()` gọi `screen_app_start()`). Phiên 16: `screen_app` sau mẫu màn hình gọi tiếp `board_init_touch()` và chạy vòng đọc touch không kết thúc (dòng log `[touch] Tab in <vùng màu> x=.. y=..`); **chưa build, chưa chạy trên phần cứng** |
+| App tasks | `app_start()` có (gọi `wifi_app_start()`), `app_main()` gọi `app_start()`. `wifi_app` chạy trên phần cứng ở mức Wi-Fi (xem dòng `sx_wifi`), phiên 12 thêm quét chẩn đoán vào `wifi_app`. Phiên 13 thêm `http_app` (task chờ IP rồi gửi một GET thử; đã chạy trên phần cứng, xem dòng `http`). Phiên 15 thêm `screen_app` (task bring-up màn hình, xem nhật ký phiên 15; **chưa build, chưa chạy trên phần cứng**). Các app khác (`AI_app`, `ntp_app`, `speaker_app`, `storage_app`) vẫn là file rỗng hoặc chỉ có header. `board_init()` có từ phiên 14; từ phiên 15 nó được gọi **bên trong task của `screen_app`**, còn `app_start()` tự nó không gọi `board_init()` (`app_start()` gọi `screen_app_start()`). Phiên 16: `screen_app` sau mẫu màn hình gọi tiếp `board_init_touch()` và chạy vòng đọc touch không kết thúc (dòng log `[touch] Tab in <vùng màu> x=.. y=..`); **chưa build, chưa chạy trên phần cứng**. Phiên 16 (bổ sung 4): `storage_app` đã có code (bài thử microSD, xem nhật ký), **chưa build, chưa chạy, chưa được gọi trong `app_start()`** (chủ dự án sẽ gọi `storage_app_start()` khi có thẻ) |
 | LVGL, OTA | Chưa bắt đầu |
 
 ### Kiến trúc (tóm tắt, chi tiết ở Firmware_Construction.md)
@@ -916,3 +916,50 @@ Chưa làm hoặc chưa kiểm chứng:
 - PSRAM chưa bật, nên mọi buffer lớn vẫn nằm trong RAM trong. Bật PSRAM (quad hay octal) vẫn là việc của bước LVGL.
 
 Kế hoạch tiếp theo: sau khi build và flash bảng mới, chọn giữa bring-up loa hoặc mic, SD và storage, bật PSRAM, hoặc LVGL. Quyết định về CA bundle FULL và OTA vẫn còn mở nhưng không còn gấp vì đã có chỗ.
+
+### Phiên 16, bổ sung 3 (2026-11-08): bảng phân vùng 16 MB đã build, đang flash
+
+Diễn biến (log chủ dự án gửi): lần `idf.py build` đầu sau khi chọn Custom partition table trong menuconfig báo lỗi `Partitions tables occupies 6.1MB of flash (6422528 bytes) which does not fit in configured flash size 2MB` (lệnh `gen_esp32part.py` chạy với `--flash-size 2MB`). Nguyên nhân: `Flash size` trong menuconfig còn 2 MB; đây không phải lỗi của `partitions.csv`. Chủ dự án đổi `Serial flasher config`, `Flash size` sang 16 MB (menuconfig) rồi build lại. Trước đó, lần flash đầu sau commit `3ba1cad` vẫn dùng bảng cũ vì `sdkconfig` chưa đổi (commit đó không có `sdkconfig`).
+
+Đọc từ log `idf.py -p COM9 flash monitor` (lần này build thành công):
+
+- `board_hmi_ai.bin binary size 0xf3c20 bytes. Smallest app partition is 0x300000 bytes. 0x20c3e0 bytes (68%) free.` Khớp với tính toán (slot 3 MB). Bootloader 0x51c0 byte, còn trống 36%.
+- Lệnh `esptool`: `--flash_size 16MB`, ghi `bootloader.bin` ở `0x0`, `board_hmi_ai.bin` ở `0x20000`, `partition-table.bin` ở `0x8000`, và thêm `ota_data_initial.bin` ở `0xf000` (do bảng có `otadata`; tệp này do build của ESP-IDF sinh ra, chủ dự án không cần làm gì).
+- `esptool` nhận chip ESP32-S3, 40 MHz, `Embedded PSRAM 2MB (AP_3v3)`; ghi bootloader xong và đã xác minh hash; đang ghi app ở 0x20000 (log dán dừng ở 5%).
+
+Chưa biết (log bị cắt): lần flash có hoàn tất không, board có boot từ `ota_0` không, bảng phân vùng bootloader in ra ra sao, các chức năng Wi-Fi, HTTP, màn hình, touch có chạy như trước không, và `sdkconfig` đã được commit chưa. Chưa ghi nhận là chạy được cho tới khi có log boot. Việc cần chủ dự án: gửi phần boot và vài dòng `[wifi]`, `[screen]`, `[touch]` đầu tiên; chạm thử bốn góc để xác nhận `BOARD_TOUCH_MIRROR_Y = true` đúng; commit cả `sdkconfig`.
+
+Trạng thái sau bổ sung này: bảng phân vùng 16 MB với hai slot OTA **đã build** (log build, 68% slot trống); flash lên board **đang chờ log hoàn tất**. OTA chưa có code. PSRAM vẫn chưa bật.
+
+### Phiên 16, bổ sung 4 (2026-11-08): xác nhận bảng phân vùng, viết storage_app
+
+Xác nhận của chủ dự án (bằng lời, chưa có log boot đầy đủ): sau khi chọn Flash size 16 MB và Custom partition table, build và flash xong, board chạy tốt như trước khi có `partitions.csv`; touch đúng trục (cùng bản `BOARD_TOUCH_MIRROR_Y = true`). `sdkconfig` đã được chủ dự án commit (commit `14f0c95`: `CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y`, `CONFIG_PARTITION_TABLE_CUSTOM=y`, `CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"`; có kèm `sdkconfig.old` do menuconfig tạo, 2157 dòng, chủ dự án tự quyết định có giữ trong git không). Chưa có log serial phần boot nên chưa ghi nhận bảng phân vùng in ra ra sao.
+
+Quyết định mới của chủ dự án: thẻ nhớ đã đặt mua loại 4 GB (SDHC, FAT32, chưa nhận được thẻ); viết code app cho storage trước, khi có thẻ chủ dự án tự thêm lời gọi trong `app.c`.
+
+Trao đổi về thẻ (kiến thức chung, không phải đo): thẻ 4 đến 32 GB (SDHC) mặc định FAT32, thẻ 64 GB trở lên (SDXC) mặc định exFAT; `LoganSDK/libs/fatfs/ffconf.h` đặt `FF_FS_EXFAT = 0` nên exFAT **không** được hỗ trợ; `FF_USE_MKFS = 1` nhưng `board.c` đặt `format_if_mount_failed = false` nên board không tự format thẻ.
+
+Đã làm (present từng file, đường dẫn trong repo):
+
+- `LoganSDK/app/user/storage_app/storage_app.h` (sửa): trước đó chỉ khai báo `void app_storage_init(void);` (không có thân hàm, không file nào gọi, đã tìm trong repo). Thay bằng `int storage_app_start(void);` cho thống nhất với `wifi_app_start`, `screen_app_start`. Macro: `APP_STORAGE_STACK_SIZE` 6144 (design, chưa đo, đổi từ 4096 vì FatFs và `storage_list` dùng nhiều stack hơn), `APP_STORAGE_TASK_PRIORITY` 2 (đổi từ 4: mount không thẻ có thể chặn task nhiều giây, không nên cao hơn Wi-Fi 3), `APP_STORAGE_BIG_FILE_BYTES` 65536, `APP_STORAGE_LIST_MAX` 16.
+- `LoganSDK/app/user/storage_app/storage_app.c` (mới, trước đó là file rỗng 0 byte): task bring-up microSD. Thứ tự: `board_init()` (an toàn khi gọi hai lần: đọc `board.c`, nó chỉ đặt cờ và trả `BOARD_OK`; `screen_app` cũng gọi), `board_init_storage()`, `storage_mount()`. Mount lỗi: in mã kèm gợi ý (không có thẻ, thẻ chưa có FAT, lỗi I/O) rồi task kết thúc. Mount được: in dung lượng và chỗ trống (MiB), liệt kê thư mục gốc (tối đa 16 mục), rồi hai bài thử: (1) file nhỏ `/lb_small.txt` ghi bằng `storage_write_file` và đọc lại so sánh; (2) file lớn `/lb_big.bin` 64 KiB ghi từng khối 512 byte theo mẫu cố định (có trộn số khối), kiểm tra kích thước bằng `storage_stat`, đọc lại so sánh từng byte, in thời gian ghi và đọc cùng tốc độ KiB/s. Nếu `/lb_small.txt` hoặc `/lb_big.bin` đã tồn tại thì bài thử dừng trước khi ghi (không đè file của chủ dự án). Cuối: xóa đúng các file bài thử đã tạo, `storage_unmount()`, in `RESULT: PASS` hoặc `FAIL` kèm số lỗi và stack còn trống thấp nhất, task kết thúc. Mọi `storage_*` chỉ gọi từ một task này, đúng yêu cầu "không an toàn đa luồng" của `storage.h`.
+- Không sửa `app.c`, CMake (đã có `storage_app.c`), `board.*`, `storage.*`. Không thêm dependency.
+
+Cách gọi khi có thẻ (chủ dự án tự làm): trong `LoganSDK/app/app.c` thêm `#include "storage_app.h"` và `(void)storage_app_start();` trong `app_start()`, cạnh các lời gọi app khác. Cắm thẻ FAT32 trước khi cấp nguồn.
+
+Đã kiểm chứng (không phải `idf.py build`, không phải chạy trên board):
+
+- Biên dịch thử trên host (gcc 13.3, không phải GCC cho ESP32-S3) với `-Wall -Wextra -Wshadow -Wconversion -Wsign-conversion -Wpedantic -Wmissing-prototypes -Wstrict-prototypes -Werror`: `storage_app.c` sạch, dùng header thật (`storage.h`, `board.h`, `sdcard.h`, `sx_time.h`), header FreeRTOS giả.
+- Chạy logic trên host (ASan, UBSan) với bộ `storage_*` giả lập trong RAM (tự viết theo hợp đồng của `storage.h`, **không phải FatFs thật và không phải driver thẻ**), 21 ca: tất cả đạt; mount lỗi (không thẻ, không FAT, I/O), `board_init_storage` lỗi, tạo task lỗi trả -1; file của chủ dự án đã tồn tại (không ghi gì), `storage_stat` lỗi; thẻ đầy giữa chừng, ghi thiếu một lần rồi ghi tiếp, byte hỏng khi đọc, file ngắn hơn dự kiến, kích thước `stat` sai, đọc file nhỏ sai; xóa lỗi, unmount lỗi; bộ đếm thời gian quay vòng; thời gian đo 0 ms (không chia cho 0); thư mục gốc 40 mục (in 16). Với mọi ca: không còn file thử trong hệ tệp giả, không handle nào còn mở, `storage_unmount` được gọi khi đã mount. 0 lỗi. 16 đột biến cố ý vào code production đều bị bắt (một số cần siết giả lập sau lần chạy đầu: thời gian giả chưa tăng khi gọi `storage_stat`, chưa có ca ghi thiếu một lần; một đột biến làm vòng đọc không thoát, bị bắt bằng timeout). Bài test và giả lập nằm ngoài repo, không commit.
+- Kiểm tra bằng lệnh: hai file chỉ có ASCII.
+
+Chưa làm hoặc chưa kiểm chứng:
+
+- **Không build ESP-IDF, không chạy trên phần cứng, chưa có thẻ.** Toàn bộ `sdcard`, `storage`, FatFs trên thẻ thật chưa từng chạy (chỉ có giả lập host từ phiên 6).
+- Chân SD (SPI: 38 đến 41) vẫn nhãn `REF`, chưa có schematic V15; `BOARD_PINMAP_VERIFIED` vẫn 0. Nếu thẻ không nhận, bước đầu là kiểm tra thẻ có FAT32 chưa, rồi tới chân.
+- Stack 6144 và độ ưu tiên 2 là design, chưa đo; task in số còn trống khi kết thúc.
+- Tốc độ KiB/s in ra chỉ là phép đo của bài thử này (SPI 10 MHz theo `board.h`, cấu hình `REF`), không phải đặc tính của thẻ; khi thời gian đo là 0 ms, tốc độ in ra 0 (không đo được).
+- Thời gian mount khi không có thẻ chưa đo ("vài giây" là ghi chú trong `storage.h`, không phải số đo).
+- Chưa biết thẻ 4 GB cụ thể có được định dạng sẵn FAT32 không.
+
+Kế hoạch tiếp theo: khi có thẻ, gọi `storage_app_start()` trong `app.c`, build, flash, gửi log `[storage]`. Trong lúc chờ thẻ có thể làm bài thử loa, hoặc bật PSRAM quad (kiểm chứng loại PSRAM qua log boot) trước khi bắt đầu LVGL.
