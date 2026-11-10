@@ -44,10 +44,30 @@
 #endif
 
 /*
+ * After the three tones the task plays the recorded word "hello" (see hello_pcm.h) this many
+ * times, with APP_SPEAKER_HELLO_GAP_MS of silence after each one. Set the count to 0 to skip it.
+ * The volume is a percent of the sample values. LOW on purpose, like the tone volume: the amplifier
+ * gain is not verified. All three values are chosen by design, not measured.
+ */
+#ifndef APP_SPEAKER_HELLO_REPEAT
+#define APP_SPEAKER_HELLO_REPEAT 3U
+#endif
+
+#ifndef APP_SPEAKER_HELLO_VOLUME
+#define APP_SPEAKER_HELLO_VOLUME 30U
+#endif
+
+#ifndef APP_SPEAKER_HELLO_GAP_MS
+#define APP_SPEAKER_HELLO_GAP_MS 700U
+#endif
+
+/*
  * Creates a task for the speaker bring-up test. The task calls board_init and board_init_speaker,
  * then plays three sine tones of 440, 880 and 1320 Hz, each APP_SPEAKER_TONE_MS long with a short
- * fade in and out, at the volume APP_SPEAKER_TONE_VOLUME, with a pause after each one, then stops
- * the speaker and ends. Each step prints one log line prefixed with the tag speaker in square
+ * fade in and out, at the volume APP_SPEAKER_TONE_VOLUME, with a pause after each one, then plays the
+ * word "hello" APP_SPEAKER_HELLO_REPEAT times at the volume APP_SPEAKER_HELLO_VOLUME, then stops
+ * the speaker and ends. The word is a synthetic recording, so it sounds robotic; whether it is
+ * understood is judged by ear. Each step prints one log line prefixed with the tag speaker in square
  * brackets.
  *
  * The program can only check that the I2S driver accepts the data and that it is paced at the

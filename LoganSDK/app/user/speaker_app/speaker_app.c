@@ -11,11 +11,17 @@
 #include "speaker.h"
 #include "sx_time.h"
 #include "speaker_app.h"
+#include "hello_pcm.h"
 
 #define RATE_HZ           BOARD_AUDIO_SAMPLE_RATE_HZ
 #define TONE_CHUNK        256U
 #define FADE_SAMPLES      160U                   /* 10 ms at 16 kHz, avoids a click at the start and the end */
 #define WRITE_TIMEOUT_MS  1000U
+
+/* The recorded word was made for 16000 Hz. */
+#if (BOARD_AUDIO_SAMPLE_RATE_HZ != HELLO_PCM_RATE_HZ)
+#error "hello_pcm.h is recorded for a different sample rate than BOARD_AUDIO_SAMPLE_RATE_HZ"
+#endif
 
 /* One period of a sine wave, 64 points, peak 32767. */
 static const int16_t s_sine[64] = {
@@ -115,7 +121,37 @@ static int play_silence(speaker_t *spk, uint32_t ms, uint32_t *written_total)
     return SPEAKER_OK;
 }
 
-/* Returns true when all three tones were accepted by the driver. */
+/*
+ * Plays the recorded word APP_SPEAKER_HELLO_REPEAT times, each followed by a pause. The source is
+ * in flash; speaker_write copies it into its own RAM buffer. Returns SPEAKER_OK or the first error.
+ */
+static int play_hello(speaker_t *spk, uint32_t *written_total)
+{
+#if (APP_SPEAKER_HELLO_REPEAT > 0U)
+    uint32_t k;
+    int ret = speaker_set_volume(spk, (uint8_t)APP_SPEAKER_HELLO_VOLUME);
+
+    printf("[speaker] word hello x%u at volume %u percent, listen for a voice\n",
+           (unsigned)APP_SPEAKER_HELLO_REPEAT, (unsigned)APP_SPEAKER_HELLO_VOLUME);
+    for (k = 0U; (k < APP_SPEAKER_HELLO_REPEAT) && (ret == SPEAKER_OK); k++) {
+        size_t written = 0U;
+
+        ret = speaker_write(spk, s_hello_pcm, HELLO_PCM_SAMPLES, &written, WRITE_TIMEOUT_MS);
+        *written_total += (uint32_t)written;
+        if (ret == SPEAKER_OK) {
+            ret = play_silence(spk, APP_SPEAKER_HELLO_GAP_MS, written_total);
+        }
+    }
+    return ret;
+#else
+    /* The word is switched off by APP_SPEAKER_HELLO_REPEAT = 0. */
+    (void)spk;
+    (void)written_total;
+    return SPEAKER_OK;
+#endif
+}
+
+/* Returns true when all three tones and the word were accepted by the driver. */
 static bool run_tone_test(speaker_t *spk)
 {
     uint32_t written = 0U;
@@ -146,6 +182,9 @@ static bool run_tone_test(speaker_t *spk)
         if (ret == SPEAKER_OK) {
             ret = play_silence(spk, APP_SPEAKER_GAP_MS, &written);
         }
+    }
+    if (ret == SPEAKER_OK) {
+        ret = play_hello(spk, &written);
     }
     sx_get_time_ms(&t1);
     (void)speaker_stop(spk);
