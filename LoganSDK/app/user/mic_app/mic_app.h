@@ -42,9 +42,41 @@
 #define APP_MIC_SETTLE_MS 200U
 #endif
 
-/* Length of the recording that is played back. 0 skips that test. Taken from the heap while it runs. Design. */
+/*
+ * Length of the recording that is played back. 0 skips that test. Taken from the heap while it runs.
+ * Design. The default is 0 now that the live monitor below does the same job continuously.
+ */
 #ifndef APP_MIC_RECORD_MS
-#define APP_MIC_RECORD_MS 2000U
+#define APP_MIC_RECORD_MS 0U
+#endif
+
+/*
+ * Live monitor: after the level meter the task reads the microphone continuously, prints one line
+ * per second and (when APP_MIC_LIVE_PLAY is 1) plays what it hears on the speaker. APP_MIC_LIVE_MS
+ * is how long it runs: APP_MIC_LIVE_FOREVER (default) never ends, 0 skips the monitor, any other
+ * value is a time in ms. All values here are chosen by design, not measured.
+ */
+#define APP_MIC_LIVE_FOREVER 0xFFFFFFFFU
+#ifndef APP_MIC_LIVE_MS
+#define APP_MIC_LIVE_MS APP_MIC_LIVE_FOREVER
+#endif
+#ifndef APP_MIC_LIVE_PLAY
+#define APP_MIC_LIVE_PLAY 1
+#endif
+/* Speaker volume in percent while the live playback runs. Start low: the speaker is near the microphone. */
+#ifndef APP_MIC_LIVE_VOLUME
+#define APP_MIC_LIVE_VOLUME 15U
+#endif
+/* Whole number gain applied to the microphone samples before playback (saturates at full scale). */
+#ifndef APP_MIC_LIVE_GAIN
+#define APP_MIC_LIVE_GAIN 4
+#endif
+/* Howl guard: if the microphone peak stays at or above this for 300 ms, the speaker is muted for the time below. */
+#ifndef APP_MIC_LIVE_HOWL_PEAK
+#define APP_MIC_LIVE_HOWL_PEAK 20000
+#endif
+#ifndef APP_MIC_LIVE_MUTE_MS
+#define APP_MIC_LIVE_MUTE_MS 3000U
 #endif
 
 /* Speaker volume while the recording is played, in percent. Chosen by design. */
@@ -88,8 +120,30 @@
  *   did not end in time, when the microphone gave only zeros, or when the heap cannot hold the
  *   buffer.
  *
+ * 3 Live monitor (see APP_MIC_LIVE_MS): only when the level meter ended ok. The task reads the
+ *   microphone in 8 ms chunks and prints one line per second:
+ *     peak  the largest absolute sample in that second,
+ *     ac    the RMS of that second after its mean was removed,
+ *     dc    the mean (the DC offset),
+ *     LOW, MID, HIGH  the RMS of the sound inside three frequency bands, each followed by a bar of
+ *           hash characters (one per bit of the level, at most 12).
+ *   The bands are LOW 100 to 400 Hz, MID 600 to 1700 Hz, HIGH 2500 to 7000 Hz (the -3 dB edges).
+ *   Each band is a 2nd order high-pass followed by a 2nd order low-pass, so the sides are gentle
+ *   (12 dB per octave): a tone just outside a band still shows partly, and a tone between two
+ *   bands (for example 500 Hz) shows in both. The levels are relative and not calibrated. The
+ *   high-pass removes the DC offset, so a large dc with small band levels means the "sound" is only
+ *   an offset.
+ *   Sounds that should show up (general speech knowledge, not measured on this board): humming
+ *   "mmm" or a low "ooo" (voice pitch about 85 to 255 Hz) lifts LOW; a long "aaa" (vowel
+ *   resonances near 700 and 1100 Hz) lifts MID; a hissing "sss" (energy mostly above 4 kHz) lifts
+ *   HIGH; a clap lifts all three. Silence should keep all three low.
+ *   With APP_MIC_LIVE_PLAY the samples (DC offset removed, times APP_MIC_LIVE_GAIN) are written to
+ *   the speaker at APP_MIC_LIVE_VOLUME. Speaker and microphone are close, so this can howl. The howl
+ *   guard mutes the speaker for APP_MIC_LIVE_MUTE_MS when the microphone is loud for 300 ms in a
+ *   row. The task does not end while the monitor runs (by default never).
+ *
  * Microphone wiring (GIVEN by the owner, see board.h): SCK to GPIO 10, WS to GPIO 11, SD to
- * GPIO 12, L/R to GND, a 3.3 V supply. The task ends when the tests are done. Wi-Fi and HTTP are
+ * GPIO 12, L/R to GND, a 3.3 V supply. The task ends when the tests (and the live monitor) are done. Wi-Fi and HTTP are
  * not affected. Returns 0 when the task was created, -1 when it could not be created. Call it
  * once, from app_start in app.c.
  */

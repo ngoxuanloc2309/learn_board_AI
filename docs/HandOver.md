@@ -1,7 +1,7 @@
 # Handover - AI Learning Device
 
 > File này do mọi phiên làm việc (Claude hoặc AI khác) cập nhật ở cuối phiên. Quy tắc: xem `RuleCode.md` mục 3.
-> Cập nhật lần cuối: 2026-11-10 (phiên 18). Đã rút gọn: chỉ giữ trạng thái hiện tại và việc gần. Nhật ký chi tiết các phiên 1 đến 16
+> Cập nhật lần cuối: 2026-11-10 (phiên 19). Đã rút gọn: chỉ giữ trạng thái hiện tại và việc gần. Nhật ký chi tiết các phiên 1 đến 16
 > (kết quả test, đột biến, log từng lần chạy) nằm trong lịch sử git: `git show 271fe1c:docs/HandOver.md`.
 
 ## 1. Đọc trước khi làm
@@ -46,7 +46,7 @@ Nhãn: **HW** = đã chạy trên board (theo log hoặc lời chủ dự án); 
 | Module `speaker` (I2S TX, mono vào, ra hai slot) | HW: chủ dự án nghe được ba tiếng bíp; log `48000 samples queued (3000 ms of audio) in 3105 ms`. Chưa biết độ to, độ méo, công suất tối đa của amp và loa 4 ohm |
 | Module `inmp441` (I2S RX, mono, 16 bit, lấy 16 bit trên của mẫu 24 bit) | HW một phần: mẫu về được, `peak`, `rms`, `dc` thay đổi theo thời gian, nhưng **kết quả chưa đáng tin**: L/R chưa nối GND (header của module ghi "L/R must never float"), peak chạm 32767 liên tục trong nhiều khối. Cần chạy lại sau khi nối L/R xuống GND |
 | `wifi_app`, `http_app`, `screen_app` | HW. `screen_app` gọi `board_init()`, vẽ mẫu màu rồi chạy vòng đọc touch không kết thúc (log `[touch] Tab in <vùng> x= y=`) |
-| `speaker_app`, `mic_app` (phiên 17, thay `audio_app`) | HW (bản `f7ae25e`, log chủ dự án 11-10, thấy cả hai chạy cùng Wi-Fi, màn hình, touch). `speaker_app`: ba tiếng bíp 440/880/1320 Hz ở 20 phần trăm, nghe được; xuất `speaker_app_tone_test_done()`. `mic_app`: chờ cờ đó rồi mới init mic (thứ tự đã đúng trong log: `[mic] level meter` in sau `[speaker] task ends`); đo mức 5 s; thu 2 s và phát lại (`recorded 32000 samples, peak 32623, software gain x1`, `playback done`). Chưa biết phát lại có nghe ra giọng không; do L/R thả nổi nên bản thu nhiều khả năng là nhiễu, chủ dự án chưa nói nghe được gì |
+| `speaker_app`, `mic_app` (phiên 17, thay `audio_app`) | HW (bản `f7ae25e`, log chủ dự án 11-10, thấy cả hai chạy cùng Wi-Fi, màn hình, touch). `speaker_app`: ba tiếng bíp 440/880/1320 Hz ở 20 phần trăm, nghe được; xuất `speaker_app_tone_test_done()`. `mic_app`: chờ cờ đó rồi mới init mic (thứ tự đã đúng trong log: `[mic] level meter` in sau `[speaker] task ends`); đo mức 5 s; thu 2 s và phát lại (`recorded 32000 samples, peak 32623, software gain x1`, `playback done`). Chưa biết phát lại có nghe ra giọng không; do L/R thả nổi nên bản thu nhiều khả năng là nhiễu, chủ dự án chưa nói nghe được gì. **Phiên 19 (host, chưa build ESP-IDF, chưa chạy HW):** `mic_app` thêm bước 3 `run_live_monitor`: sau bài đo mức, đọc mic liên tục (khối 8 ms), in **1 dòng mỗi giây** (`peak`, `ac` = RMS đã bỏ DC, `dc`, mức ba vùng LOW 100-400 Hz, MID 600-1700 Hz, HIGH 2500-7000 Hz kèm thanh `#`), và phát lại thẳng ra loa (đã bỏ DC, nhân `APP_MIC_LIVE_GAIN` = 4, âm lượng `APP_MIC_LIVE_VOLUME` = 15). Có howl guard: mic có peak từ `APP_MIC_LIVE_HOWL_PEAK` (20000) liên tục 300 ms thì loa bị tắt `APP_MIC_LIVE_MUTE_MS` (3000 ms). Chạy mãi mãi theo mặc định (`APP_MIC_LIVE_MS`). Đã đổi: `APP_MIC_RECORD_MS` mặc định từ 2000 xuống 0 (bài thu 2 s rồi phát bị bỏ qua), bài đo mức in 1 dòng mỗi giây thay vì mỗi 100 ms. Ba vùng dùng bộ lọc biquad số nguyên (Butterworth bậc 2 cao thông rồi thấp thông, hệ số Q28, trạng thái Q8) |
 | `storage_app` (bài thử microSD) | Có code, chưa có log build, chưa chạy, **chưa được gọi trong `app_start()`** (chủ dự án thêm `#include "storage_app.h"` và `(void)storage_app_start();` khi có thẻ) |
 | `AI_app`, `ntp_app`, `services/AI`, `AI_backend`, `AI_frontend` | File rỗng. Chờ đặc tả backend AI |
 | `libs/cJSON` | Có trong thư mục, chưa build |
@@ -72,7 +72,7 @@ Nhãn trong `board.h`: `REF` (lấy từ tài liệu dòng WT32-SC01 Plus, chưa
 **Chưa xác minh (không được coi là sự thật):**
 
 - Chân thẻ SD (CS 41, MOSI 40, SCLK 39, MISO 38): `REF`, chưa thử. Chân loa đã chạy (xem trên) nhưng vẫn `REF`; amp có cần chân enable hay không: có vẻ không (đã nghe được), chưa xác minh bằng schematic.
-- Mic INMP441: chân SCK GPIO 10, WS 11, SD (DOUT của mic) 12, `GIVEN` theo lời chủ dự án. **L/R chưa nối GND** (lời chủ dự án 11-10; dòng cũ "nối GND qua trở 10K" trong bản trước là sai hoặc chưa thực hiện, tin lời mới nhất). Với L/R thả nổi mic có thể xuất ở khe trái hoặc phải một cách không xác định, `inmp441.c` chỉ đọc khe trái. Dữ liệu vẫn về được (xem mục 3), nhưng không đáng tin. Nguồn 3.3 V cho mic chưa xác minh (header mở rộng chỉ có +5V và GND).
+- Mic INMP441: chân SCK GPIO 10, WS 11, SD (DOUT của mic) 12, `GIVEN` theo lời chủ dự án. **L/R:** chủ dự án nói (phiên 19, GIVEN) đã nối xuống GND; log chạy sau khi nối chưa gửi cho phiên này, và chủ dự án cho rằng đỉnh cao trong log là do loa kêu, đỉnh thấp là mic lúc loa tắt (chưa kiểm chứng). Trước đó (phiên 18) L/R thả nổi. Với L/R thả nổi mic có thể xuất ở khe trái hoặc phải một cách không xác định, `inmp441.c` chỉ đọc khe trái. Dữ liệu vẫn về được (xem mục 3), nhưng không đáng tin. Nguồn 3.3 V cho mic chưa xác minh (header mở rộng chỉ có +5V và GND).
 - Loại PSRAM (quad hay octal): chưa kết luận; `CONFIG_SPIRAM` chưa bật. **Nếu octal thì GPIO 35 đến 37 (chân loa trong `board.h`) không dùng được.** Cách kiểm chứng: bật `CONFIG_SPIRAM` và xem log boot.
 - RS485 (chưa khai báo trong `board.h`), `TE` (GPIO 48) và `TP_INT` (GPIO 7) chưa dùng nên chưa khai báo. Chân CS của LCD giả định nối đất.
 - Bản đồ thanh ghi touch theo mô hình FocalTech thông dụng, chưa đối chiếu datasheet.
@@ -100,7 +100,7 @@ Nhãn trong `board.h`: `REF` (lấy từ tài liệu dòng WT32-SC01 Plus, chưa
 
 ## 6. Việc đang chờ chủ dự án
 
-1. **Nối chân L/R của mic xuống GND, rồi chạy lại** (bản `f7ae25e` hoặc mới hơn). Trước khi chạy: nếu muốn tránh tiếng ồn lớn khi phát lại, hạ `APP_MIC_PLAY_VOLUME` (hiện 40) hoặc nghe thử với âm lượng thấp, vì khi L/R thả nổi bản thu gần như toàn nhiễu mức cao (peak 32623) và `mic_app` đã phát lại nó ở 40 phần trăm. Gửi:
+1. **(Phiên 19) Build và chạy bản `mic_app` mới** (live monitor + phát lại, mục 3). Cẩn thận tiếng hú: loa gần mic, bắt đầu với âm lượng thấp. Gửi log `[mic]` (mỗi giây một dòng) và cho biết: im lặng thì ba vùng có thấp không; ngân "mmm" thì LOW có lên không; kéo dài "aaa" thì MID; xì "sss" thì HIGH; vỗ tay thì cả ba; phát lại có nghe ra giọng không, có hú không, độ trễ; có dòng `howl guard` không; log build (kích thước `board_hmi_ai.bin`, cảnh báo của `mic_app.c`). Phần cũ bên dưới vẫn đúng khi cần: **nối chân L/R của mic xuống GND, rồi chạy lại** (bản `f7ae25e` hoặc mới hơn). Trước khi chạy: nếu muốn tránh tiếng ồn lớn khi phát lại, hạ `APP_MIC_PLAY_VOLUME` (hiện 40) hoặc nghe thử với âm lượng thấp, vì khi L/R thả nổi bản thu gần như toàn nhiễu mức cao (peak 32623) và `mic_app` đã phát lại nó ở 40 phần trăm. Gửi:
    (a) log serial từ dòng `[mic] level meter` tới `[mic] task ends` (cả 50 dòng đo mức, kèm dòng `verdict`, `recorded ... peak ... gain`);
    (b) bằng tai: lúc im lặng và lúc nói, vỗ tay thì thanh `#` có khác nhau rõ không; phát lại có nghe ra giọng mình không, có méo hay có nhiễu không;
    (c) cho biết ba tiếng bíp to hay nhỏ, có méo không (có cần chỉnh `APP_SPEAKER_TONE_VOLUME`), và lần phát lại ở âm lượng 40 phần trăm có quá to không;
@@ -133,7 +133,7 @@ Quyết định còn mở:
 
 Mỗi bước phải build được trước khi sang bước sau.
 
-1. Mic: nối L/R xuống GND và chạy lại (mục 6, việc 1). Loa đã nghe được; chỉnh `APP_SPEAKER_TONE_VOLUME` theo độ to chủ dự án báo. Cân nhắc thêm vào `mic_app` một kết luận "gần như toàn bộ khối chạm full scale: dữ liệu nhiều khả năng không phải âm thanh" (hiện code chỉ biết "toàn không", "không đổi", "có biến thiên", nên đã báo ok với dữ liệu nhiễu). Chưa làm, chờ chủ dự án duyệt.
+1. Mic: chạy bản live monitor của phiên 19 (mục 6, việc 1), đánh giá chất lượng thu theo ba vùng; chỉnh `APP_MIC_LIVE_GAIN`, `APP_MIC_LIVE_VOLUME`, ngưỡng howl guard theo kết quả. Chưa biết hai cổng I2S (mic cổng 1, loa cổng 0) có lệch nhịp khi chạy vòng đọc-ghi liên tục hay không; nếu nghe rè hoặc thấy lỗi đọc thì phải xem lại. Loa đã nghe được; chỉnh `APP_SPEAKER_TONE_VOLUME` theo độ to chủ dự án báo. Cân nhắc thêm vào `mic_app` một kết luận "gần như toàn bộ khối chạm full scale: dữ liệu nhiều khả năng không phải âm thanh" (hiện code chỉ biết "toàn không", "không đổi", "có biến thiên", nên đã báo ok với dữ liệu nhiễu). Chưa làm, chờ chủ dự án duyệt.
 2. SD và storage khi có thẻ (mục 6, việc 3).
 3. Quyết định PSRAM (kiểm loại bằng `CONFIG_SPIRAM` và log boot), rồi LVGL: flush callback của LVGL nên chờ bằng callback hoàn tất của bus I80 thay cho bước chờ 1 ms của `fill_rect`; đọc input từ touch; không block task LVGL bằng network.
 4. Thử `BOARD_LCD_PCLK_HZ` cao hơn (quan sát nhiễu, sọc; số ms trong log sẽ không đổi nhiều, xem mục 5).
@@ -162,4 +162,5 @@ Mỗi bước phải build được trước khi sang bước sau.
 - Phiên 14: `board.h`, `board.c`, `board_init_xxx`; HTTPS GET chạy trên board.
 - Phiên 15: `screen_app`; màn hình đúng màu, đúng hướng (đảo màu bật). Phiên 16: bài thử touch (chạy được, sửa trục Y), flash 16 MB và `partitions.csv` 2 slot OTA, `storage_app` (chưa gọi).
 - Phiên 17 (11-09): đối chiếu repo (HandOver chưa có `audio_app` của commit `271fe1c`); tách `audio_app` thành `speaker_app` và `mic_app` (host, chưa build); rút gọn HandOver.
+- Phiên 19 (11-10): `mic_app` thêm live monitor (1 dòng mỗi giây, ba vùng tần số bằng biquad số nguyên, phát lại thẳng ra loa kèm howl guard), `APP_MIC_RECORD_MS` mặc định 0. Làm lại trên bản clone (bản dán từ một phiên khác không có trong repo; hệ số biquad được tính lại và trùng). Kiểm tra: biên dịch host `-Wall -Wextra -Wshadow -Wconversion -Wpedantic -Werror` bốn cấu hình; test logic host dưới ASan/UBSan (bộ lọc khớp đáp ứng giải tích trong 4 phần trăm cộng 2 đơn vị, DC bị loại, howl guard, chế độ không phát). **Chưa build ESP-IDF, chưa chạy trên board.**
 - Phiên 18 (11-10): nhận log chạy `speaker_app` và `mic_app` trên board (bản `f7ae25e`): loa nghe được, bảng phân vùng 16 MB do bootloader in đúng, mic có dữ liệu nhưng L/R thả nổi nên chưa đáng tin; chưa sửa code.
