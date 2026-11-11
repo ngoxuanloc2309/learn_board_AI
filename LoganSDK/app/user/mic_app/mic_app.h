@@ -61,7 +61,7 @@
 #define APP_MIC_LIVE_MS APP_MIC_LIVE_FOREVER
 #endif
 #ifndef APP_MIC_LIVE_PLAY
-#define APP_MIC_LIVE_PLAY 0
+#define APP_MIC_LIVE_PLAY 1
 #endif
 /* Speaker volume in percent while the live playback runs. Start low: the speaker is near the microphone. */
 #ifndef APP_MIC_LIVE_VOLUME
