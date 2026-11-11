@@ -189,6 +189,15 @@ int sx_i2s_init(const sx_i2s_config_t *config)
         },
     };
 
+    /*
+     * On ESP32-S3 the default slot macro selects both slots even in mono mode, but the driver
+     * (v5.4.3, hal/esp32s3/i2s_ll.h) says that in mono mode only one slot should be enabled.
+     * Use the left slot: the INMP441 sends its data there when the L/R pin is tied to GND.
+     */
+    if (config->channels == SX_I2S_MONO) {
+        standard_config.slot_cfg.slot_mask = I2S_STD_SLOT_LEFT;
+    }
+
     if (want_tx) {
         ret = map_error(i2s_channel_init_std_mode(tx_channel, &standard_config));
     }

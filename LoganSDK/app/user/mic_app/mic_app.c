@@ -591,6 +591,49 @@ static void amplify(int16_t *s, size_t n, int32_t gain)
     }
 }
 
+/*
+ * Prints where the loudest sample is, the rms of the even and of the odd samples, and eight
+ * samples around the peak. If two I2S slots arrive interleaved, the even and odd rms differ a lot.
+ * A peak in the first few hundred samples points to a start-up transient.
+ */
+static void print_slot_diag(const int16_t *s, size_t n)
+{
+    uint64_t sq_even = 0U;
+    uint64_t sq_odd = 0U;
+    size_t peak_at = 0U;
+    int32_t peak = 0;
+    size_t from;
+    size_t i;
+
+    if (n < 16U) {
+        return;
+    }
+    for (i = 0U; i < n; i++) {
+        int32_t v = s[i];
+        int32_t a = (v < 0) ? -v : v;
+
+        if (a > peak) {
+            peak = a;
+            peak_at = i;
+        }
+        if ((i % 2U) == 0U) {
+            sq_even += (uint64_t)((int64_t)v * v);
+        } else {
+            sq_odd += (uint64_t)((int64_t)v * v);
+        }
+    }
+    from = (peak_at >= 4U) ? (peak_at - 4U) : 0U;
+    if ((from + 8U) > n) {
+        from = n - 8U;
+    }
+    printf("[mic] diag: peak at sample %u of %u, even rms=%u odd rms=%u\n",
+           (unsigned)peak_at, (unsigned)n,
+           (unsigned)isqrt64(sq_even / (n / 2U)), (unsigned)isqrt64(sq_odd / (n / 2U)));
+    printf("[mic] diag: samples %u..%u: %d %d %d %d %d %d %d %d\n", (unsigned)from, (unsigned)(from + 7U),
+           (int)s[from], (int)s[from + 1U], (int)s[from + 2U], (int)s[from + 3U],
+           (int)s[from + 4U], (int)s[from + 5U], (int)s[from + 6U], (int)s[from + 7U]);
+}
+
 static test_result_t run_record_play(speaker_t *spk, inmp441_t *mic)
 {
     const size_t total = ((size_t)RATE_HZ / 1000U) * APP_MIC_RECORD_MS;
@@ -641,6 +684,7 @@ static test_result_t run_record_play(speaker_t *spk, inmp441_t *mic)
         free(rec);
         return RESULT_FAILED;
     }
+    print_slot_diag(rec, got);
     gain = APP_MIC_PLAY_PEAK / st.peak;
     if (gain < 1) {
         gain = 1;

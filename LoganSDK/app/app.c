@@ -8,11 +8,11 @@
 void app_start(void)
 {
     /* The result is already printed by wifi_app_start. A failed Wi-Fi start does not stop the device. */
-    (void)wifi_app_start();
+    // (void)wifi_app_start();
     /* http_app waits for the Wi-Fi IP by itself, so the order of these two calls does not matter. */
-    (void)http_app_start();
+    // (void)http_app_start();
     /* screen_app brings up the display by itself in its own task (board_init is called there). */
-    (void)screen_app_start();
+    // (void)screen_app_start();
     /*
      * speaker_app and mic_app are the speaker and microphone bring-up tests. Each calls board_init
      * by itself (it is safe to call twice). speaker_app plays three tones once per boot. mic_app

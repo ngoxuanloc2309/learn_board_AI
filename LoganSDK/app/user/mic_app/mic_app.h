@@ -47,7 +47,7 @@
  * Design. The default is 0 now that the live monitor below does the same job continuously.
  */
 #ifndef APP_MIC_RECORD_MS
-#define APP_MIC_RECORD_MS 0U
+#define APP_MIC_RECORD_MS 3000U
 #endif
 
 /*
@@ -58,7 +58,7 @@
  */
 #define APP_MIC_LIVE_FOREVER 0xFFFFFFFFU
 #ifndef APP_MIC_LIVE_MS
-#define APP_MIC_LIVE_MS APP_MIC_LIVE_FOREVER
+#define APP_MIC_LIVE_MS APP_MIC_LIVE_FOREVER//0U//APP_MIC_LIVE_FOREVER
 #endif
 #ifndef APP_MIC_LIVE_PLAY
 #define APP_MIC_LIVE_PLAY 1
