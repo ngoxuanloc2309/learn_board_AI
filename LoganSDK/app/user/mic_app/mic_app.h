@@ -65,7 +65,7 @@
 #endif
 /* Speaker volume in percent while the live playback runs. Start low: the speaker is near the microphone. */
 #ifndef APP_MIC_LIVE_VOLUME
-#define APP_MIC_LIVE_VOLUME 8U
+#define APP_MIC_LIVE_VOLUME 10U
 #endif
 /* Whole number gain applied to the microphone samples before playback (saturates at full scale). */
 #ifndef APP_MIC_LIVE_GAIN

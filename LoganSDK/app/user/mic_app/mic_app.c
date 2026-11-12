@@ -23,7 +23,7 @@
 #define BAR_MAX           16U
 #define SILENCE_CHUNK     256U
 #define BAR_WIDTH         12U
-#define BAND_COUNT        3U
+#define BAND_COUNT        8U
 #define LIVE_CHUNK        128U                    /* samples per read in the live monitor, 8 ms */
 #define LIVE_WINDOW       (RATE_HZ / 10U)         /* 100 ms window for the howl guard */
 #define LIVE_REPORT_WINDOWS 10U                   /* one report line per 10 windows, 1 s */
@@ -42,10 +42,17 @@ static int16_t s_chunk[LIVE_CHUNK];
 /*
  * Band filters. Each band is a 2nd order Butterworth high-pass followed by a 2nd order Butterworth
  * low-pass (12 dB per octave), made offline with the usual bilinear biquad formulas for 16000 Hz.
- * The -3 dB edges are: LOW 100 to 400 Hz, MID 600 to 1700 Hz, HIGH 2500 to 7000 Hz. The
- * coefficients are in Q28. The filter states are in Q8 (the sample times 256) so that rounding
- * does not add noise. The states are kept from one block to the next.
+ * The -3 dB edges, in band order: 1 to 15 Hz, 15 to 100 Hz, 100 to 400 Hz (LOW), 400 to 600 Hz,
+ * 600 to 1700 Hz (MID), 1700 to 2500 Hz, 2500 to 7000 Hz (HIGH), and 7000 Hz and up. The three
+ * bands named LOW, MID and HIGH are the original ones. The others were added after a measurement
+ * showed that LOW, MID and HIGH together hold only about 2 to 9 percent of the signal power, so the
+ * rest had to be located; a later log then showed that most of it is below 15 Hz. The coefficients
+ * are in Q28. The filter states are in Q14 (the sample times 16384): with fewer bits the rounding
+ * noise of the 1 to 15 Hz band was 20 times larger than its true level (a host simulation with
+ * white noise gave 96 instead of 4), while the other bands did not change. The squares that are
+ * added up are first reduced to Q8. The states are kept from one block to the next.
  */
+#define BAND_STATE_SHIFT 14
 typedef struct biquad_coeff {
     int32_t b0;
     int32_t b1;
@@ -61,18 +68,35 @@ typedef struct biquad_state {
     int64_t y2;
 } biquad_state_t;
 
-static const char *const s_band_name[BAND_COUNT] = { "LOW", "MID", "HIGH" };
+/* Positions of the three original bands inside the band tables. */
+#define BAND_LOW  2U
+#define BAND_MID  4U
+#define BAND_HIGH 6U
+
+static const char *const s_band_name[BAND_COUNT] = {
+    "1-15", "15-100", "100-400", "400-600", "600-1700", "1700-2500", "2500-7000", "7000+"
+};
 
 static const biquad_coeff_t s_hp[BAND_COUNT] = {
-    { 261084055, -522168111, 261084055, -521966747, 253934019 },   /* LOW,  high-pass 100 Hz */
-    { 227219676, -454439352, 227219676, -448073307, 192369941 },   /* MID,  high-pass 600 Hz */
-    { 131481915, -262963829, 131481915, -187834497, 69657706 }     /* HIGH, high-pass 2500 Hz */
+    { 268360927, -536721854, 268360927, -536721834, 268286419 },   /* band 0, high-pass 1 Hz */
+    { 267319693, -534639386, 267319693, -534634749, 266208568 },   /* band 1, high-pass 15 Hz */
+    { 261084055, -522168111, 261084055, -521966747, 253934019 },   /* band 2, high-pass 100 Hz */
+    { 240211778, -480423556, 240211778, -477447832, 214963824 },   /* band 3, high-pass 400 Hz */
+    { 227219676, -454439352, 227219676, -448073307, 192369941 },   /* band 4, high-pass 600 Hz */
+    { 166662211, -333324422, 166662211, -293242402, 104970987 },   /* band 5, high-pass 1700 Hz */
+    { 131481915, -262963829, 131481915, -187834497, 69657706 },   /* band 6, high-pass 2500 Hz */
+    { 8040872, -16081744, 8040872, 390370540, 154098572 }   /* band 7, high-pass 7000 Hz */
 };
 
 static const biquad_coeff_t s_lp[BAND_COUNT] = {
-    { 1487862, 2975724, 1487862, -477447832, 214963824 },          /* LOW,  low-pass 400 Hz */
-    { 20041010, 40082021, 20041010, -293242402, 104970987 },       /* MID,  low-pass 1700 Hz */
-    { 203226142, 406452284, 203226142, 390370540, 154098572 }      /* HIGH, low-pass 7000 Hz */
+    { 2319, 4638, 2319, -534634749, 266208568 },   /* band 0, low-pass 15 Hz */
+    { 100682, 201364, 100682, -521966747, 253934019 },   /* band 1, low-pass 100 Hz */
+    { 1487862, 2975724, 1487862, -477447832, 214963824 },   /* band 2, low-pass 400 Hz */
+    { 3183022, 6366045, 3183022, -448073307, 192369941 },   /* band 3, low-pass 600 Hz */
+    { 20041010, 40082021, 20041010, -293242402, 104970987 },   /* band 4, low-pass 1700 Hz */
+    { 37564666, 75129333, 37564666, -187834497, 69657706 },   /* band 5, low-pass 2500 Hz */
+    { 203226142, 406452284, 203226142, 390370540, 154098572 },   /* band 6, low-pass 7000 Hz */
+    { 268435456, 0, 0, 0, 0 }   /* band 7, no low-pass: passes the signal unchanged (1.0 in Q28) */
 };
 
 static biquad_state_t s_hp_state[BAND_COUNT];
@@ -324,7 +348,7 @@ static void make_bar(char *out, uint32_t value)
     out[bits] = '\0';
 }
 
-/* One step of a biquad (direct form I, Q28 coefficients, Q8 input and output, rounded). */
+/* One step of a biquad (direct form I, Q28 coefficients, input and output in the format of the state, rounded). */
 static int64_t biquad_run(const biquad_coeff_t *c, biquad_state_t *st, int64_t x)
 {
     int64_t acc = (int64_t)c->b0 * x + (int64_t)c->b1 * st->x1 + (int64_t)c->b2 * st->x2
@@ -349,21 +373,22 @@ static void bands_reset(int16_t first)
     memset(s_hp_state, 0, sizeof(s_hp_state));
     memset(s_lp_state, 0, sizeof(s_lp_state));
     for (b = 0U; b < BAND_COUNT; b++) {
-        s_hp_state[b].x1 = (int64_t)first * 256;
-        s_hp_state[b].x2 = (int64_t)first * 256;
+        s_hp_state[b].x1 = (int64_t)first * ((int64_t)1 << BAND_STATE_SHIFT);
+        s_hp_state[b].x2 = (int64_t)first * ((int64_t)1 << BAND_STATE_SHIFT);
     }
 }
 
-/* Runs one sample through the three bands and adds the square of each band output (Q8) to sq. */
+/* Runs one sample through all bands and adds the square of each band output (Q8) to sq. */
 static void bands_step(int16_t x, uint64_t sq[BAND_COUNT])
 {
     unsigned b;
 
     for (b = 0U; b < BAND_COUNT; b++) {
-        int64_t h = biquad_run(&s_hp[b], &s_hp_state[b], (int64_t)x * 256);
+        int64_t h = biquad_run(&s_hp[b], &s_hp_state[b], (int64_t)x * ((int64_t)1 << BAND_STATE_SHIFT));
         int64_t y = biquad_run(&s_lp[b], &s_lp_state[b], h);
+        int64_t y8 = (y + ((int64_t)1 << (BAND_STATE_SHIFT - 9))) >> (BAND_STATE_SHIFT - 8);
 
-        sq[b] += (uint64_t)(y * y);
+        sq[b] += (uint64_t)(y8 * y8);
     }
 }
 
@@ -375,6 +400,59 @@ static uint32_t band_level(uint64_t sq, uint32_t n)
     }
     return (isqrt64(sq / n) + 128U) / 256U;
 }
+
+/*
+ * Playback high-pass. A log taken with the speaker connected showed that most of the signal power
+ * is below 15 Hz, and that the 15 to 100 Hz band is about three times stronger than the LOW band even
+ * in quiet seconds. The old output path only removed DC with a slow tracker (corner near 10 Hz), so
+ * all of that reached the small speaker and was heard as a rumble and as scratching. The playback now
+ * goes through the 2nd order Butterworth high-pass at 100 Hz (the coefficients of band LOW). The
+ * measurements above still use the raw samples. Set APP_MIC_PLAY_HPF to 0 to get the old DC tracker.
+ */
+#ifndef APP_MIC_PLAY_HPF
+#define APP_MIC_PLAY_HPF 1
+#endif
+
+/*
+ * Pre-roll for the live playback, in ms of silence written to the speaker before the first sample
+ * of the microphone. In the I2S driver of ESP-IDF v5.4.3 a buffer that the DMA has finished is
+ * cleared and handed back to the writer, and the DMA sends a buffer when it reaches it, filled or
+ * not. If the writer only adds samples as fast as the microphone delivers them (8 ms per chunk), it
+ * has almost no lead on the DMA, and a late chunk is heard as a gap of zeros: a rough, scratchy
+ * sound. The recorded playback does not have this problem because it writes a whole buffer at once.
+ * The pre-roll builds a lead of this many ms; it also delays the sound by the same time. The value
+ * is chosen by design, not measured. The DMA ring holds 6 buffers of 240 frames (90 ms), so keep it
+ * below about 75. Set 0 to disable.
+ */
+#ifndef APP_MIC_LIVE_PREROLL_MS
+#define APP_MIC_LIVE_PREROLL_MS 60U
+#endif
+
+#if APP_MIC_PLAY_HPF
+static biquad_state_t s_play_hpf;
+
+/* Prepares the playback filter for a new stream whose first sample is first (no ringing on a DC offset). */
+static void play_hpf_reset(int16_t first)
+{
+    memset(&s_play_hpf, 0, sizeof(s_play_hpf));
+    s_play_hpf.x1 = (int64_t)first * 256;
+    s_play_hpf.x2 = (int64_t)first * 256;
+}
+
+/* One sample through the playback high-pass, rounded and limited to 16 bit. */
+static int16_t play_hpf_step(int16_t x)
+{
+    int64_t y = biquad_run(&s_hp[BAND_LOW], &s_play_hpf, (int64_t)x * 256);
+    int64_t r = (y + 128) >> 8;
+
+    if (r > 32767) {
+        r = 32767;
+    } else if (r < -32768) {
+        r = -32768;
+    }
+    return (int16_t)r;
+}
+#endif
 
 typedef struct live_acc {
     int32_t  peak;
@@ -389,7 +467,10 @@ static void live_print(const live_acc_t *a, bool playing, bool muted)
     char bar[BAND_COUNT][BAR_WIDTH + 1U];
     uint32_t level[BAND_COUNT];
     uint64_t mean_sq;
+    uint64_t band_ms = 0U;
+    uint64_t ac_ms;
     uint32_t ac;
+    uint32_t covered = 0U;
     int32_t dc;
     unsigned b;
 
@@ -397,18 +478,29 @@ static void live_print(const live_acc_t *a, bool playing, bool muted)
         return;
     }
     mean_sq = (uint64_t)(a->sum * a->sum) / a->n;
-    ac = isqrt64(((a->sq > mean_sq) ? (a->sq - mean_sq) : 0U) / a->n);
+    ac_ms = ((a->sq > mean_sq) ? (a->sq - mean_sq) : 0U) / a->n;
+    ac = isqrt64(ac_ms);
     dc = (int32_t)(a->sum / (int64_t)a->n);
     for (b = 0U; b < BAND_COUNT; b++) {
         level[b] = band_level(a->band_sq[b], a->n);
         make_bar(bar[b], level[b]);
+        band_ms += a->band_sq[b] / a->n;     /* mean square in Q16 */
     }
-    printf("[mic] peak=%5d ac=%5u dc=%6d | %s=%5u %-12s %s=%5u %-12s %s=%5u %-12s | %s\n",
+    if (ac_ms > 0U) {
+        /* The bands overlap a little at their edges, so this is only a rough share. */
+        covered = (uint32_t)((band_ms * 100U) / (ac_ms * 65536U));
+    }
+    printf("[mic] peak=%5d ac=%5u dc=%6d | LOW=%5u %-12s MID=%5u %-12s HIGH=%5u %-12s | %s\n",
            (int)a->peak, (unsigned)ac, (int)dc,
-           s_band_name[0], (unsigned)level[0], bar[0],
-           s_band_name[1], (unsigned)level[1], bar[1],
-           s_band_name[2], (unsigned)level[2], bar[2],
+           (unsigned)level[BAND_LOW], bar[BAND_LOW],
+           (unsigned)level[BAND_MID], bar[BAND_MID],
+           (unsigned)level[BAND_HIGH], bar[BAND_HIGH],
            muted ? "MUTED by howl guard" : (playing ? "playing" : "print only"));
+    printf("[mic] bands rms (Hz): %s=%u %s=%u %s=%u %s=%u %s=%u %s=%u %s=%u %s=%u | about %u%% of the ac power\n",
+           s_band_name[0], (unsigned)level[0], s_band_name[1], (unsigned)level[1],
+           s_band_name[2], (unsigned)level[2], s_band_name[3], (unsigned)level[3],
+           s_band_name[4], (unsigned)level[4], s_band_name[5], (unsigned)level[5],
+           s_band_name[6], (unsigned)level[6], s_band_name[7], (unsigned)level[7], (unsigned)covered);
 }
 
 /*
@@ -429,7 +521,9 @@ static test_result_t run_live_monitor(speaker_t *spk, inmp441_t *mic, bool speak
     uint32_t mute_left = 0U;
     unsigned howl = 0U;
     int32_t win_peak = 0;
+#if !APP_MIC_PLAY_HPF
     int32_t dc_q8 = 0;
+#endif
     bool first = true;
     bool spk_started = false;
     int ret;
@@ -446,6 +540,11 @@ static test_result_t run_live_monitor(speaker_t *spk, inmp441_t *mic, bool speak
         printf("[mic] live playback ON: volume %u percent, gain x%d. If you hear a howl, move the speaker "
                "away from the microphone or lower APP_MIC_LIVE_VOLUME\n",
                (unsigned)APP_MIC_LIVE_VOLUME, (int)APP_MIC_LIVE_GAIN);
+#if APP_MIC_PLAY_HPF
+        printf("[mic] playback high-pass 100 Hz is ON (APP_MIC_PLAY_HPF)\n");
+#else
+        printf("[mic] playback high-pass is OFF, only a slow DC tracker is used\n");
+#endif
         sret = speaker_set_volume(spk, (uint8_t)APP_MIC_LIVE_VOLUME);
         if (sret == SPEAKER_OK) {
             sret = speaker_start(spk);
@@ -466,6 +565,17 @@ static test_result_t run_live_monitor(speaker_t *spk, inmp441_t *mic, bool speak
         return RESULT_FAILED;
     }
     ret = discard_settle(mic);
+#if APP_MIC_LIVE_PREROLL_MS > 0U
+    if (spk_started && (sret == SPEAKER_OK)) {
+        sret = write_silence(spk, APP_MIC_LIVE_PREROLL_MS);
+        if (sret != SPEAKER_OK) {
+            printf("[mic] speaker pre-roll failed: %d, the monitor prints only\n", sret);
+        } else {
+            printf("[mic] live playback pre-roll %u ms (APP_MIC_LIVE_PREROLL_MS)\n",
+                   (unsigned)APP_MIC_LIVE_PREROLL_MS);
+        }
+    }
+#endif
 
     while ((ret == INMP441_OK) && (forever || (done < total))) {
         size_t got = 0U;
@@ -478,7 +588,11 @@ static test_result_t run_live_monitor(speaker_t *spk, inmp441_t *mic, bool speak
         }
         if (first && (got > 0U)) {
             bands_reset(s_chunk[0]);
+#if APP_MIC_PLAY_HPF
+            play_hpf_reset(s_chunk[0]);
+#else
             dc_q8 = (int32_t)s_chunk[0] * 256;
+#endif
             first = false;
         }
         for (i = 0U; i < got; i++) {
@@ -496,9 +610,14 @@ static test_result_t run_live_monitor(speaker_t *spk, inmp441_t *mic, bool speak
             acc.sq += (uint64_t)((int64_t)v * v);
             bands_step(s_chunk[i], acc.band_sq);
 
+#if APP_MIC_PLAY_HPF
+            /* Output: 100 Hz high-pass (it also removes DC), then the gain, with saturation. */
+            out = (int32_t)play_hpf_step(s_chunk[i]) * (int32_t)APP_MIC_LIVE_GAIN;
+#else
             /* Output: remove the slow DC estimate, then the gain, with saturation. */
             dc_q8 += ((v * 256) - dc_q8) / 256;
             out = (v - (dc_q8 / 256)) * (int32_t)APP_MIC_LIVE_GAIN;
+#endif
             if (out > 32767) {
                 out = 32767;
             } else if (out < -32768) {
@@ -590,6 +709,53 @@ static void amplify(int16_t *s, size_t n, int32_t gain)
         s[i] = (int16_t)v;
     }
 }
+
+/*
+ * Raw dump of the recording over the console, for offline analysis. It runs once, right after the
+ * recording and before the gain is applied, so the samples are exactly what the microphone sent.
+ * Only used when the record and play step is on (APP_MIC_RECORD_MS above 0). Set to 0 to disable.
+ * Each sample is four hex digits (16 bit two's complement), DUMP_PER_LINE samples per line.
+ */
+#ifndef APP_MIC_DUMP_RAW
+#define APP_MIC_DUMP_RAW 0
+#endif
+#define DUMP_PER_LINE 64U
+
+#if APP_MIC_DUMP_RAW
+static char s_dump_line[(DUMP_PER_LINE * 4U) + 1U];
+
+static void dump_raw(const int16_t *s, size_t n)
+{
+    static const char hex[] = "0123456789ABCDEF";
+    size_t pos = 0U;
+
+    printf("[mic] raw begin samples=%u rate=%u hex16 per_line=%u\n", (unsigned)n, (unsigned)RATE_HZ,
+           (unsigned)DUMP_PER_LINE);
+    while (pos < n) {
+        size_t cnt = n - pos;
+        size_t i;
+
+        if (cnt > DUMP_PER_LINE) {
+            cnt = DUMP_PER_LINE;
+        }
+        for (i = 0U; i < cnt; i++) {
+            uint16_t u = (uint16_t)s[pos + i];
+
+            s_dump_line[(i * 4U) + 0U] = hex[(u >> 12) & 0xFU];
+            s_dump_line[(i * 4U) + 1U] = hex[(u >> 8) & 0xFU];
+            s_dump_line[(i * 4U) + 2U] = hex[(u >> 4) & 0xFU];
+            s_dump_line[(i * 4U) + 3U] = hex[u & 0xFU];
+        }
+        s_dump_line[cnt * 4U] = '\0';
+        printf("%s\n", s_dump_line);
+        pos += cnt;
+        /* Yield every line (one tick). A long console write without yielding starves the idle task
+           and trips the task watchdog. sx_delay_ms is not used because a short wait there is a busy wait. */
+        vTaskDelay(1);
+    }
+    printf("[mic] raw end\n");
+}
+#endif
 
 /*
  * Prints where the loudest sample is, the rms of the even and of the odd samples, and eight
@@ -685,6 +851,25 @@ static test_result_t run_record_play(speaker_t *spk, inmp441_t *mic)
         return RESULT_FAILED;
     }
     print_slot_diag(rec, got);
+#if APP_MIC_DUMP_RAW
+    dump_raw(rec, got);
+#endif
+#if APP_MIC_PLAY_HPF
+    {
+        const int32_t raw_peak = st.peak;
+        size_t k;
+
+        play_hpf_reset(rec[0]);
+        for (k = 0U; k < got; k++) {
+            rec[k] = play_hpf_step(rec[k]);
+        }
+        compute_stats(rec, got, &st);
+        printf("[mic] playback high-pass 100 Hz: peak %d -> %d\n", (int)raw_peak, (int)st.peak);
+        if (st.peak < 1) {
+            st.peak = 1;
+        }
+    }
+#endif
     gain = APP_MIC_PLAY_PEAK / st.peak;
     if (gain < 1) {
         gain = 1;
