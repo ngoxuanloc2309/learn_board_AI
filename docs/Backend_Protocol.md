@@ -51,7 +51,17 @@ Ngoài phạm vi v0 (không làm, không thiết kế chi tiết):
 - Cách hiện thực trên firmware (đề xuất, cần duyệt): dùng `tcp_transport` có sẵn trong ESP-IDF và API `esp_transport_ws_*`, đặt trong `services/AI`. **VERIFIED-HDR (v5.4.3):** header `esp_transport_ws.h` có `esp_transport_ws_set_path`, `_set_subprotocol`, `_set_headers`, `_set_auth`, `_set_config`, `_send_raw` (chọn opcode TEXT hoặc BINARY), `_get_read_opcode`, `_get_fin_flag`, `_get_read_payload_len`, `_poll_connection_closed`. Cấu hình có cờ `propagate_control_frames`: nếu `false`, khung điều khiển do transport tự xử lý khi đọc.
 - Component `esp_websocket_client` **không nằm trong ESP-IDF v5.4.3** (đã kiểm: không có trong cây `components/`). Dùng nó là thêm dependency mới, cần duyệt. Đề xuất không dùng.
 - Thêm `tcp_transport` vào `REQUIRES` của `services` là thay đổi CMake, cần chủ dự án duyệt.
-- **UNVERIFIED (cần đọc `transport_ws.c` trước khi code):** xử lý khung bị phân mảnh khi nhận, hành vi khi mất kết nối giữa chừng, tự trả lời ping.
+- **Đã đọc mã nguồn ESP-IDF v5.4.3 (phiên 24):** `tcp_transport/transport_ws.c`, `transport_ssl.c` (phần TCP), `transport.c`, `include/esp_transport_ws.h`. **Chưa đọc:** phần bắt tay `ws_connect` có kiểm `Sec-WebSocket-Accept` hay không, và phần TLS cho `wss://`. Kết luận (VERIFIED-HDR, từ mã nguồn, chưa chạy trên board):
+  1. **Gửi, opcode.** `esp_transport_ws_send_raw` ghi byte đầu của khung đúng bằng `opcode` người gọi truyền và không tự thêm bit FIN. Phải truyền `WS_TRANSPORT_OPCODES_BINARY | WS_TRANSPORT_OPCODES_FIN` (hoặc `TEXT | FIN`). Khung client luôn có mask.
+  2. **Gửi, buffer bị sửa tại chỗ.** Mask được XOR trực tiếp lên buffer của người gọi rồi XOR lại sau khi gửi. Buffer phải ghi được (RAM, không phải `static const` nằm ở flash), và không task nào khác được đọc nó trong lúc gửi.
+  3. **Gửi, ghi dở.** Header và payload là hai lần `send()` riêng, không lặp khi gửi thiếu. Kết quả trả về: số byte payload đã gửi, hoặc -1 khi lỗi, hoặc 0 khi hết thời gian chờ ghi (có thể xảy ra sau khi header đã đi). Quy tắc firmware (DESIGN): kết quả khác `len` thì coi là lỗi nặng, đóng và nối lại, không gửi tiếp trên kết nối đó.
+  4. **Nagle (UNVERIFIED).** `tcp_transport` không đặt `TCP_NODELAY` (tìm trong mã không thấy), và `esp_transport_get_socket` không nằm trong header công khai. Chưa biết hai lần `send()` nhỏ mỗi khối có bị trễ không. Đo độ trễ ở bước 3. Có sẵn `esp_transport_tcp_set_keep_alive` để phát hiện đối phương chết.
+  5. **Nhận, giá trị trả về.** `esp_transport_read` trả số byte payload. Trả 0 nghĩa là hết thời gian **hoặc** vừa xử lý xong khung điều khiển (ping hoặc close): hai trường hợp này không phân biệt được. Trả -1 là bên kia đóng (FIN) hoặc lỗi. Tầng TCP bên dưới: timeout 0, FIN -1, lỗi -2.
+  6. **Nhận, khung phân mảnh.** Transport **không ghép khung**. Mỗi khung có `opcode` và `fin` riêng, khung tiếp theo có opcode CONT (0). Nếu buffer đọc nhỏ hơn payload thì các lần đọc sau tiếp tục cùng khung. Ứng dụng phải tự ghép, dùng `esp_transport_ws_get_fin_flag`, `_get_read_opcode`, `_get_read_payload_len`.
+  7. **Ping.** Khi `propagate_control_frames = false`, PING được trả PONG cùng payload tự động, **nhưng chỉ khi có task đang gọi `esp_transport_read`**. Không đọc thì không trả. Khung điều khiển có payload trên 125 byte bị coi là lỗi (-1).
+  8. **Close.** Khi nhận CLOSE, transport tự gửi CLOSE rồi chờ socket đóng (cùng timeout). `esp_transport_read` lúc đó trả 0 (dễ nhầm với timeout), lần đọc sau mới trả -1. Có `esp_transport_ws_poll_connection_closed` để kiểm tra.
+  9. **Nguy cơ mất đồng bộ luồng (đọc mã `ws_read`).** Nếu đã nhận header mà phần payload chưa đến đủ trong `timeout_ms`, `ws_read` trả 0 và đặt `bytes_remaining = 0`. Phần payload đến sau sẽ bị đọc nhầm thành header của khung kế, làm hỏng luồng. Header bị cắt giữa chừng thì trả -1. Cách phòng (DESIGN): gọi `esp_transport_poll_read` với timeout ngắn rồi mới gọi `esp_transport_read` với timeout dài (cỡ vài trăm ms trở lên, chưa đo), và coi mọi bất thường là lý do đóng và nối lại.
+  - Hệ quả cho bản v0: tin JSON từ server nhỏ (dưới vài trăm byte) nên thường nằm trong một khung, nhưng firmware vẫn phải xử lý khung phân mảnh (giới hạn kích thước ghép, vượt thì đóng và nối lại, số giới hạn OPEN). Ping của server tắt mặc định; nếu bật sau này thì task đọc của board phải chạy liên tục.
 
 ## 4. Khung dữ liệu
 
@@ -153,7 +163,7 @@ Giá trị khởi điểm để thử (DESIGN, **không có số đo nào**, ph�
 
 | Tham số | Khởi điểm | Ghi chú |
 |---|---|---|
-| Khoảng im lặng để kết thúc | 1500 ms | Ngắn thì cắt nhầm khi bé ngừng suy nghĩ, dài thì phản hồi chậm |
+| Khoảng im lặng để kết thúc | **3500 ms (chủ dự án chốt phiên 24)** | Ngắn thì cắt nhầm khi bé ngừng suy nghĩ, dài thì phản hồi chậm: sau khi nói xong thiết bị chờ thêm 3,5 s nếu không ai chạm DỪNG. Đặt thành hằng số cấu hình riêng. Chưa thử trên bé |
 | Chờ tiếng nói đầu tiên | 6000 ms | Hết hạn thì `reason: "timeout"` |
 | Độ dài tối đa một lượt | 15000 ms | Hết hạn thì `reason: "max_length"` |
 | Chờ `stt_result` sau `listen_stop` | 10000 ms | Cùng cỡ `HTTP_SVC_TIMEOUT_MS_DEFAULT`, cũng là giá trị theo thiết kế, chưa đo |
@@ -178,6 +188,7 @@ Mã lỗi (`error.code`, DESIGN, đề xuất):
 Hành vi:
 
 - Thiết bị hiển thị lỗi rồi về `IDLE`. Không tự thử lại lượt đã mất (người dùng nói lại).
+- Phát hiện mất kết nối (từ mã nguồn, mục 3): `esp_transport_read` trả -1, hoặc ghi trả số khác `len`, hoặc TCP keepalive báo. Khung CLOSE từ server làm `read` trả 0 trước, -1 ở lần đọc sau.
 - Mất kết nối: thiết bị tự nối lại (chiến lược chờ tăng dần, số cụ thể OPEN), gửi lại `hello`. Lượt đang dở bị bỏ. Wi-Fi đã có cơ chế tự nối lại (`sx_wifi`, HW), phần này chỉ lo kết nối WebSocket.
 - Server phải chịu được thiết bị gửi khối sau khi đã gửi `listen_stop` (do độ trễ). Bỏ qua khối của lượt đã đóng.
 
@@ -205,7 +216,10 @@ Bài thử (D10, DECIDED phiên 23): chạy trong LAN, STT cục bộ, âm thanh
 
 Việc cần có:
 
-1. **Font có dấu.** 95 ký tự ASCII cộng 134 ký tự ngoài ASCII. Cách tính 134: 12 nguyên âm (a, ă, â, e, ê, i, o, ô, ơ, u, ư, y) x 6 dạng (không dấu và 5 dấu thanh) x 2 kiểu hoa thường = 144, trừ 12 ký tự đã là ASCII, cộng đ và Đ. Tổng 229 ký tự x 48 byte (ô 16x24, 1 bit) = 10992 byte, khoảng 11 KB flash (**tính, chưa đo**). Chuyển TTF thành mảng C bằng script Python **ngoài firmware**. Font cụ thể chưa chọn. **Phải kiểm giấy phép của font trước khi đưa vào repo** (chưa kiểm). Rủi ro chưa kiểm: dấu chồng (ệ, ữ, Ấ) có thể nhìn rối ở ô 16x24 1 bit.
+1. **Font có dấu.** 95 ký tự ASCII cộng 134 ký tự ngoài ASCII. Cách tính 134: 12 nguyên âm (a, ă, â, e, ê, i, o, ô, ơ, u, ư, y) x 6 dạng (không dấu và 5 dấu thanh) x 2 kiểu hoa thường = 144, trừ 12 ký tự đã là ASCII, cộng đ và Đ. Tổng 229 ký tự x 48 byte (ô 16x24, 1 bit) = 10992 byte, khoảng 11 KB flash (**tính, chưa đo**). Chuyển TTF thành mảng C bằng script Python **ngoài firmware**. Font cụ thể: chưa chốt. **Phải kiểm giấy phép của font trước khi đưa vào repo.** Rủi ro với hướng rasterize TTF: dấu chồng (ệ, ữ, Ấ) có thể nhìn rối ở ô 16x24 1 bit, chưa thử.
+   - **Ứng viên đã kiểm bằng dữ liệu thật (phiên 24): GNU Unifont**, font bitmap sẵn (không cần rasterize TTF). Kiểm trên `unifont.hex` của gói Ubuntu `unifont` 15.1.01: đủ cả **229 trên 229** ký tự của bộ trên, tất cả là ô **8x16** (16 byte mỗi ký tự, tổng 229 x 16 = 3664 byte, tính từ số đo). Đã in thử ệ, Ữ, Ấ, ở ra dạng chữ ASCII: dấu chồng đọc được nhưng sát mép trên của ô (chưa xem trên màn hình thật). Lưới chữ: 480/8 = 60 cột x 320/16 = 20 dòng ở cỡ gốc; nhân đôi nguyên (16x32) cho 30 cột x 10 dòng. Một dòng 480 x 16 RGB565 là 15360 byte; nhân đôi (480 x 32) là 30720 byte, đúng bằng `max_transfer_bytes` (30720, giá trị DESIGN chưa xác nhận) nên phải chia dòng (tính).
+   - **Giấy phép Unifont (cần chủ dự án quyết, tôi không phải luật sư):** trang chủ upstream (unifoundry.com, nguồn web) ghi font từ bản 13.0.04 được cấp phép kép SIL OFL 1.1 và GPL 2+ kèm ngoại lệ nhúng font, và nói dùng được với phần mềm không tự do. **Nhưng** tệp `copyright` trong gói Ubuntu 15.1.01 chỉ ghi GPL-2+ (tóm tắt của người đóng gói, không có ngoại lệ). Hai nguồn lệch nhau nên **phải lấy font và đọc văn bản giấy phép trực tiếp từ upstream** trước khi đưa vào repo, giữ nguyên thông báo bản quyền và văn bản OFL cạnh font. Chưa rõ việc đổi font sang mảng C có tính là "Modified Version" theo OFL hay không.
+   - Phương án dự phòng chưa kiểm: rasterize một font TTF giấy phép OFL sang ô 16x24 (như tính ban đầu, 10992 byte). Chưa tra giấy phép hay độ rõ của từng font cụ thể.
 2. **Bộ vẽ chữ.** Giải mã UTF-8, tra bảng, vẽ qua `screen_hmi_draw_bitmap`. Theo bảng phụ thuộc, `modules` không được `REQUIRES` module khác, nên bộ vẽ chữ nhận hàm vẽ bitmap qua con trỏ hàm (cùng kiểu `screen_hmi_delay_fn_t`) thay vì phụ thuộc `screenHMI`. **Là thành phần mới, cần chủ dự án duyệt trước khi viết.** Màn hình 480x320 với ô 16x24 cho 30 cột x 13 dòng (tính từ kích thước).
 3. **Server** chuẩn hóa NFC và gửi JSON UTF-8 nguyên (mục 4).
 4. **`lang`** trong `listen_start` (mục 4.1).
@@ -234,7 +248,7 @@ Chia nhỏ, mỗi bước có tiêu chí qua và chủ dự án tự build, gử
 |---|---|---|
 | 0 | Duyệt tài liệu này và các mục OPEN | **Xong phiên 23:** chủ dự án chốt D7 đến D12 theo đề xuất |
 | 1 | Server Python echo cộng thiết bị giả (WAV) | Server nhận khung, ghi ra file WAV nghe được, trả `stt_result` giả |
-| 2 | Firmware: nút chạm trên màn hình, máy trạng thái, VAD, vẽ chữ. **Chưa có mạng**, in log độ dài lượt và lý do kết thúc | Chạm bắt đầu, chạm dừng, VAD cắt đúng ở 30 cm trong phòng yên (tiêu chí số: chủ dự án đặt) |
+| 2 | Firmware: nút chạm trên màn hình, máy trạng thái, VAD, vẽ chữ. **Chưa có mạng**, in log độ dài lượt và lý do kết thúc | Chạm bắt đầu, chạm dừng. **VAD (chủ dự án đồng ý phiên 24):** 10 lần đọc một câu ngắn ở 30 cm trong phòng yên rồi im lặng; đạt khi không lần nào bị cắt giữa câu và ít nhất 8 trên 10 lần tự dừng với `reason=vad` mà không phải chạm. Một nút đổi trạng thái (NÓI thành DỪNG) |
 | 3 | Firmware nối server echo, stream khối PCM | Nghe lại bản server lưu: sạch, đủ, không mất khối (số thứ tự liên tục); đo độ trễ và mất gói |
 | 4a | Thử vài mô hình STT offline trên PC bằng WAV thu từ mic board (từng mô hình một, theo dõi RAM và VRAM) | Chọn được mô hình theo số đo trên giọng của chủ dự án; ghi thời gian xử lý |
 | 4 | Server thêm STT thật (mô hình đã chọn ở 4a) | `stt_result` đúng với câu nói tiếng Việt (có `lang`) |
@@ -254,6 +268,6 @@ Cập nhật phiên 23: câu 1 (IP máy dev: `192.168.30.101`, cùng LAN), câu 
 5. D10: chính sách riêng tư.
 6. D11: hướng vẽ chữ (A hay B).
 7. D12: STT cục bộ hay API.
-8. Tiêu chí số cho "VAD cắt đúng" ở bước 2.
+8. ~~Tiêu chí số cho "VAD cắt đúng" ở bước 2~~: đã chốt phiên 24 (mục 13, bước 2); khoảng im lặng 3500 ms (mục 7).
 9. Bộ đệm giữa mic và mạng: cỡ bao nhiêu, đặt ở RAM trong hay PSRAM (đo ở bước 3 mới biết jitter).
 10. `board.h` chưa khai báo chân/cổng cho gì mới. Tài liệu này không đòi thay đổi chân nào.
