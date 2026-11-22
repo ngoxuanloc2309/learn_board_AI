@@ -15,6 +15,9 @@
 #include "speaker_app.h"
 #include "mic_app.h"
 
+/* Helpers of the measuring bands are not used while the live monitor is quiet. */
+#define MIC_MAYBE_UNUSED  __attribute__((unused))
+
 #define RATE_HZ           BOARD_AUDIO_SAMPLE_RATE_HZ
 #define BLOCK_SAMPLES     (RATE_HZ / 10U)        /* 100 ms of microphone data */
 #define WRITE_TIMEOUT_MS  1000U
@@ -73,7 +76,7 @@ typedef struct biquad_state {
 #define BAND_MID  4U
 #define BAND_HIGH 6U
 
-static const char *const s_band_name[BAND_COUNT] = {
+static const char *const s_band_name[BAND_COUNT] MIC_MAYBE_UNUSED = {
     "1-15", "15-100", "100-400", "400-600", "600-1700", "1700-2500", "2500-7000", "7000+"
 };
 
@@ -88,7 +91,7 @@ static const biquad_coeff_t s_hp[BAND_COUNT] = {
     { 8040872, -16081744, 8040872, 390370540, 154098572 }   /* band 7, high-pass 7000 Hz */
 };
 
-static const biquad_coeff_t s_lp[BAND_COUNT] = {
+static const biquad_coeff_t s_lp[BAND_COUNT] MIC_MAYBE_UNUSED = {
     { 2319, 4638, 2319, -534634749, 266208568 },   /* band 0, low-pass 15 Hz */
     { 100682, 201364, 100682, -521966747, 253934019 },   /* band 1, low-pass 100 Hz */
     { 1487862, 2975724, 1487862, -477447832, 214963824 },   /* band 2, low-pass 400 Hz */
@@ -99,8 +102,8 @@ static const biquad_coeff_t s_lp[BAND_COUNT] = {
     { 268435456, 0, 0, 0, 0 }   /* band 7, no low-pass: passes the signal unchanged (1.0 in Q28) */
 };
 
-static biquad_state_t s_hp_state[BAND_COUNT];
-static biquad_state_t s_lp_state[BAND_COUNT];
+static biquad_state_t s_hp_state[BAND_COUNT] MIC_MAYBE_UNUSED;
+static biquad_state_t s_lp_state[BAND_COUNT] MIC_MAYBE_UNUSED;
 
 typedef enum { RESULT_SKIPPED = 0, RESULT_OK, RESULT_FAILED } test_result_t;
 
@@ -334,7 +337,7 @@ static test_result_t run_mic_meter(inmp441_t *mic)
 }
 
 /* Writes a bar of hash characters, one per bit of value, at most BAR_WIDTH, into out (BAR_WIDTH + 1 bytes). */
-static void make_bar(char *out, uint32_t value)
+MIC_MAYBE_UNUSED static void make_bar(char *out, uint32_t value)
 {
     unsigned bits = bit_count(value);
     unsigned i;
@@ -366,7 +369,7 @@ static int64_t biquad_run(const biquad_coeff_t *c, biquad_state_t *st, int64_t x
  * Prepares the band filters for a new stream whose first sample is first. The high-pass state is
  * set as if the signal had always been first, so a DC offset does not ring at the start.
  */
-static void bands_reset(int16_t first)
+MIC_MAYBE_UNUSED static void bands_reset(int16_t first)
 {
     unsigned b;
 
@@ -379,7 +382,7 @@ static void bands_reset(int16_t first)
 }
 
 /* Runs one sample through all bands and adds the square of each band output (Q8) to sq. */
-static void bands_step(int16_t x, uint64_t sq[BAND_COUNT])
+MIC_MAYBE_UNUSED static void bands_step(int16_t x, uint64_t sq[BAND_COUNT])
 {
     unsigned b;
 
@@ -393,7 +396,7 @@ static void bands_step(int16_t x, uint64_t sq[BAND_COUNT])
 }
 
 /* RMS in sample units from a sum of squares of Q8 values over n samples. */
-static uint32_t band_level(uint64_t sq, uint32_t n)
+MIC_MAYBE_UNUSED static uint32_t band_level(uint64_t sq, uint32_t n)
 {
     if (n == 0U) {
         return 0U;
@@ -483,7 +486,7 @@ typedef struct live_acc {
     uint32_t n;
 } live_acc_t;
 
-static void live_print(const live_acc_t *a, bool playing, bool muted)
+MIC_MAYBE_UNUSED static void live_print(const live_acc_t *a, bool playing, bool muted)
 {
 #if !APP_MIC_LIVE_BANDS
     {
@@ -669,6 +672,39 @@ static guard_event_t guard_window(howl_guard_t *g, int32_t in_peak, int32_t out_
 }
 
 /*
+ * Automatic gain for the live playback. The recorded playback scales the whole recording so that its
+ * peak reaches APP_MIC_PLAY_PEAK (at most APP_MIC_MAX_GAIN times). The live path cannot see the whole
+ * sound, so it does the same per chunk: the gain that brings the peak of this chunk to
+ * APP_MIC_LIVE_AGC_TARGET is used at once when it is lower than the current gain (no clipping), and is
+ * approached slowly when it is higher (no pumping between words). A chunk whose peak is below
+ * APP_MIC_LIVE_AGC_GATE is room noise: the gain is held, so the noise is not raised. The gain is in
+ * Q8 (256 is x1). Returns the gain for the next chunk.
+ */
+static int32_t agc_next_gain(int32_t cur_q8, int32_t peak)
+{
+    int32_t want_q8;
+    int32_t step;
+
+    if (peak < (int32_t)APP_MIC_LIVE_AGC_GATE) {
+        return cur_q8;
+    }
+    want_q8 = (int32_t)(((int64_t)APP_MIC_LIVE_AGC_TARGET * 256) / peak);
+    if (want_q8 < 256) {
+        want_q8 = 256;
+    } else if (want_q8 > ((int32_t)APP_MIC_LIVE_AGC_MAX * 256)) {
+        want_q8 = (int32_t)APP_MIC_LIVE_AGC_MAX * 256;
+    }
+    if (want_q8 <= cur_q8) {
+        return want_q8;
+    }
+    step = (want_q8 - cur_q8) / (int32_t)APP_MIC_LIVE_AGC_RELEASE;
+    if (step < 1) {
+        step = 1;
+    }
+    return cur_q8 + step;
+}
+
+/*
  * Continuous monitor with live playback (see mic_app.h). Reads the microphone in 8 ms chunks,
  * measures every sample, removes the DC offset, multiplies by APP_MIC_LIVE_GAIN and writes the
  * result to the speaker. Prints one line per second. Returns RESULT_OK when it ended by itself.
@@ -685,13 +721,16 @@ static test_result_t run_live_monitor(speaker_t *spk, inmp441_t *mic, bool speak
     howl_guard_t guard;
     int32_t win_in_peak = 0;
     uint64_t win_out_sq = 0U;
+#if !APP_MIC_LIVE_QUIET
     uint32_t read_ms = 0U;
     uint32_t write_ms = 0U;
+    uint32_t t0 = 0U;
+    uint32_t t1 = 0U;
+#endif
+    int32_t gain_q8 = APP_MIC_LIVE_AGC ? ((int32_t)APP_MIC_LIVE_AGC_START * 256) : ((int32_t)APP_MIC_LIVE_GAIN * 256);
 #if APP_MIC_LIVE_TEST_TONE
     uint32_t tone_phase = 0U;
 #endif
-    uint32_t t0 = 0U;
-    uint32_t t1 = 0U;
 #if !APP_MIC_PLAY_HPF
     int32_t dc_q8 = 0;
 #endif
@@ -709,7 +748,7 @@ static test_result_t run_live_monitor(speaker_t *spk, inmp441_t *mic, bool speak
     printf("[mic] live monitor%s, one line per second. Make a sound: silence, hum mmm (LOW), say aaa (MID), "
            "hiss sss (HIGH), clap (all three)\n", forever ? " (never ends)" : "");
     if (want_play) {
-        printf("[mic] live playback ON: volume %u percent, gain x%d. If you hear a howl, move the speaker "
+        printf("[mic] live playback ON: volume %u percent, gain x%d (start value when AGC is on). If you hear a howl, move the speaker "
                "away from the microphone or lower APP_MIC_LIVE_VOLUME\n",
                (unsigned)APP_MIC_LIVE_VOLUME, (int)APP_MIC_LIVE_GAIN);
 #if APP_MIC_LIVE_TEST_TONE
@@ -755,17 +794,23 @@ static test_result_t run_live_monitor(speaker_t *spk, inmp441_t *mic, bool speak
     while ((ret == INMP441_OK) && (forever || (done < total))) {
         size_t got = 0U;
         size_t i;
+        int32_t chunk_peak = 0;
+        int32_t gain_new;
         const bool playing = spk_started && (sret == SPEAKER_OK);
 
+#if !APP_MIC_LIVE_QUIET
         sx_get_time_ms(&t0);
+#endif
         ret = inmp441_read(mic, s_chunk, LIVE_CHUNK, &got, READ_TIMEOUT_MS);
+#if !APP_MIC_LIVE_QUIET
         sx_get_time_ms(&t1);
         read_ms += t1 - t0;
+#endif
         if (ret != INMP441_OK) {
             break;
         }
         if (first && (got > 0U)) {
-#if APP_MIC_LIVE_BANDS
+#if APP_MIC_LIVE_BANDS && !APP_MIC_LIVE_QUIET
             bands_reset(s_chunk[0]);
 #endif
 #if APP_MIC_PLAY_HPF
@@ -775,39 +820,72 @@ static test_result_t run_live_monitor(speaker_t *spk, inmp441_t *mic, bool speak
 #endif
             first = false;
         }
+
+        /* Pass 1: measure, remove DC (high-pass) and find the peak of this chunk. */
         for (i = 0U; i < got; i++) {
             int32_t v = s_chunk[i];
-            int32_t a = (v < 0) ? -v : v;
             int32_t f;
             int32_t fa;
-            int32_t out;
 
-            if (a > acc.peak) {
-                acc.peak = a;
+            (void)v;     /* not used when the loop is quiet and the high-pass is on */
+#if !APP_MIC_LIVE_QUIET
+            {
+                int32_t a = (v < 0) ? -v : v;
+
+                if (a > acc.peak) {
+                    acc.peak = a;
+                }
+                acc.sum += v;
+                acc.sq += (uint64_t)((int64_t)v * v);
             }
-            acc.sum += v;
-            acc.sq += (uint64_t)((int64_t)v * v);
 #if APP_MIC_LIVE_BANDS
             bands_step(s_chunk[i], acc.band_sq);
 #endif
+#endif
 
 #if APP_MIC_PLAY_HPF
-            /* Output: 100 Hz high-pass (it also removes DC), then the gain, with saturation. */
+            /* Output: 100 Hz high-pass (it also removes DC). */
             f = (int32_t)play_hpf_step(s_chunk[i]);
 #else
-            /* Output: remove the slow DC estimate, then the gain, with saturation. */
+            /* Output: remove the slow DC estimate. */
             dc_q8 += ((v * 256) - dc_q8) / 256;
             f = v - (dc_q8 / 256);
+            if (f > 32767) {
+                f = 32767;
+            } else if (f < -32768) {
+                f = -32768;
+            }
 #endif
 #if APP_MIC_LIVE_TEST_TONE
             f = (int32_t)s_tone[tone_phase];
             tone_phase = (tone_phase + 1U) & 15U;
 #endif
-            out = f * (int32_t)APP_MIC_LIVE_GAIN;
             fa = (f < 0) ? -f : f;
             if (fa > win_in_peak) {
                 win_in_peak = fa;
             }
+            if (fa > chunk_peak) {
+                chunk_peak = fa;
+            }
+            s_chunk[i] = (int16_t)f;
+        }
+
+        /*
+         * Pass 2: gain, with saturation. A rise of the gain is ramped across the chunk so it makes no
+         * click. A fall is applied to the whole chunk at once, because the loud part that caused it may
+         * be at the start of the chunk and a ramp would let that part clip.
+         */
+#if APP_MIC_LIVE_AGC
+        gain_new = agc_next_gain(gain_q8, chunk_peak);
+#else
+        gain_new = gain_q8;
+        (void)chunk_peak;
+#endif
+        for (i = 0U; i < got; i++) {
+            int32_t g = (gain_new <= gain_q8) ? gain_new
+                        : (gain_q8 + (((gain_new - gain_q8) * (int32_t)(i + 1U)) / (int32_t)got));
+            int32_t out = ((int32_t)s_chunk[i] * g) / 256;
+
             if (out > 32767) {
                 out = 32767;
             } else if (out < -32768) {
@@ -816,15 +894,24 @@ static test_result_t run_live_monitor(speaker_t *spk, inmp441_t *mic, bool speak
             win_out_sq += (uint64_t)((int64_t)out * out);
             s_chunk[i] = (int16_t)out;
         }
+        if (got > 0U) {
+            gain_q8 = gain_new;
+        }
+#if !APP_MIC_LIVE_QUIET
         acc.n += (uint32_t)got;
+#endif
 
         if (playing && !guard_muted(&guard) && (got > 0U)) {
             size_t written = 0U;
 
+#if !APP_MIC_LIVE_QUIET
             sx_get_time_ms(&t0);
+#endif
             sret = speaker_write(spk, s_chunk, got, &written, WRITE_TIMEOUT_MS);
+#if !APP_MIC_LIVE_QUIET
             sx_get_time_ms(&t1);
             write_ms += t1 - t0;
+#endif
             if (sret != SPEAKER_OK) {
                 printf("[mic] speaker_write failed: %d, the monitor prints only from now on\n", sret);
             }
@@ -837,6 +924,8 @@ static test_result_t run_live_monitor(speaker_t *spk, inmp441_t *mic, bool speak
                 const guard_event_t ev = guard_window(&guard, win_in_peak,
                                                       (int32_t)isqrt64(win_out_sq / win_n));
 
+                /* Prints of the guard are rare, but one print stalls the loop, so they are off when quiet. */
+#if !APP_MIC_LIVE_QUIET
                 if (ev == GUARD_EVENT_TRIPPED) {
                     printf("[mic] howl guard: output rms above %d for %u ms in a row, speaker muted to test it\n",
                            (int)APP_MIC_LIVE_HOWL_RMS, (unsigned)(HOWL_WINDOWS * 100U));
@@ -850,6 +939,7 @@ static test_result_t run_live_monitor(speaker_t *spk, inmp441_t *mic, bool speak
                 } else if (ev == GUARD_EVENT_RELEASED) {
                     printf("[mic] howl guard: mute time over, speaker back on\n");
                 }
+#endif
                 if ((ev == GUARD_EVENT_VOICE) || (ev == GUARD_EVENT_RELEASED)) {
 #if APP_MIC_LIVE_PREROLL_MS > 0U
                     /* The speaker buffers ran empty while it was muted: build the lead again. */
@@ -865,6 +955,7 @@ static test_result_t run_live_monitor(speaker_t *spk, inmp441_t *mic, bool speak
             win_out_sq = 0U;
             windows++;
             if (windows >= LIVE_REPORT_WINDOWS) {
+#if !APP_MIC_LIVE_QUIET
                 live_print(&acc, playing, guard_muted(&guard));
                 {
                     const uint32_t span = LIVE_REPORT_WINDOWS * 100U;
@@ -877,6 +968,7 @@ static test_result_t run_live_monitor(speaker_t *spk, inmp441_t *mic, bool speak
                 read_ms = 0U;
                 write_ms = 0U;
                 memset(&acc, 0, sizeof(acc));
+#endif
                 windows = 0U;
             }
         }

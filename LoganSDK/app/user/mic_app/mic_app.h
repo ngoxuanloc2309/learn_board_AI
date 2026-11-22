@@ -63,13 +63,55 @@
 #ifndef APP_MIC_LIVE_PLAY
 #define APP_MIC_LIVE_PLAY 1
 #endif
+/*
+ * Quiet live monitor: 1 means the live loop prints nothing, measures nothing and runs no band
+ * filters, so it only reads the microphone and writes the speaker. A print on the 115200 baud
+ * console takes tens of ms, longer than the lead the speaker has, and a stall of the reader drops
+ * microphone data without an error (ESP-IDF v5.4.3, i2s_common.c, rx callback), so each print could
+ * be heard as a crackle. Set 0 to get the one-line-per-second report and the howl guard messages
+ * back (for diagnosis). Chosen by design, not measured.
+ */
+#ifndef APP_MIC_LIVE_QUIET
+#define APP_MIC_LIVE_QUIET 1
+#endif
 /* Speaker volume in percent while the live playback runs. Start low: the speaker is near the microphone. */
 #ifndef APP_MIC_LIVE_VOLUME
 #define APP_MIC_LIVE_VOLUME 30U
 #endif
-/* Whole number gain applied to the microphone samples before playback (saturates at full scale). */
+/* Whole number gain, used only when APP_MIC_LIVE_AGC is 0 (saturates at full scale). */
 #ifndef APP_MIC_LIVE_GAIN
 #define APP_MIC_LIVE_GAIN 3
+#endif
+/*
+ * Automatic gain for the live playback, the live version of what the recorded playback does (it
+ * scales the recording so that its peak reaches APP_MIC_PLAY_PEAK, at most APP_MIC_MAX_GAIN times).
+ * TARGET is the peak to reach, MAX the largest gain, START the gain at the beginning, GATE the chunk
+ * peak (after the 100 Hz high-pass) below which the sound counts as room noise and the gain is held,
+ * RELEASE the number of 8 ms chunks the gain takes to rise (a fall is immediate, so no clipping).
+ * All chosen by design: the room noise after the high-pass was a peak of about 25 to 50 in one
+ * recording, speech at 20 cm a peak of about 1000 to 4500. Set APP_MIC_LIVE_AGC to 0 for the fixed
+ * APP_MIC_LIVE_GAIN. DEFAULT IS 0: with the speaker next to the microphone the AGC raises the gain
+ * whenever the speaker sound reaches the microphone above GATE, which makes the feedback loop worse
+ * (a first test with it on gave a loud howl before anybody spoke). The recorded playback has no such
+ * loop because the speaker is off while it records.
+ */
+#ifndef APP_MIC_LIVE_AGC
+#define APP_MIC_LIVE_AGC 0
+#endif
+#ifndef APP_MIC_LIVE_AGC_TARGET
+#define APP_MIC_LIVE_AGC_TARGET 16000
+#endif
+#ifndef APP_MIC_LIVE_AGC_MAX
+#define APP_MIC_LIVE_AGC_MAX 16
+#endif
+#ifndef APP_MIC_LIVE_AGC_START
+#define APP_MIC_LIVE_AGC_START 4
+#endif
+#ifndef APP_MIC_LIVE_AGC_GATE
+#define APP_MIC_LIVE_AGC_GATE 120
+#endif
+#ifndef APP_MIC_LIVE_AGC_RELEASE
+#define APP_MIC_LIVE_AGC_RELEASE 64
 #endif
 /*
  * Howl guard trigger: the rms of the output (the microphone after the 100 Hz filter, times
