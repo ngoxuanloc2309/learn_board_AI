@@ -61,22 +61,41 @@
 #define APP_MIC_LIVE_MS APP_MIC_LIVE_FOREVER//0U//APP_MIC_LIVE_FOREVER
 #endif
 /*
- * Diagnostic (1 = run it once, after the record and play step and before the live monitor). It finds
- * out why the continuous live path (microphone and speaker together) sounds harsh while the recorded
- * playback is clean. Four phases of APP_MIC_DIAG_MS each, in this order, and it needs a SILENT room
- * (do not talk, do not touch the board): A the microphone alone; B the microphone together with the
- * speaker running and fed with digital silence (so the speaker clocks and the amplifier run but no
- * sound comes out); C the microphone together with the speaker playing a quiet 1 kHz tone at
- * APP_MIC_LIVE_VOLUME; A again, to see drift. Each phase prints one line: peak and rms after the
- * 100 Hz high-pass, rms with only the mean removed, and the mean. Then a summary line compares B with
- * A. The loop of B and C reads and writes in 8 ms chunks like the old live loop, with no print inside.
- * Set 0 when it is no longer needed. Chosen by design.
+ * Diagnostic (1 = run it once, after the record and play step and before the live monitor). It looks
+ * for the reason why the continuous live path (microphone and speaker together) sounds harsh while
+ * the recorded playback is clean. It needs a SILENT room (do not talk, do not touch the board).
+ * The microphone is started once and kept running. First a trace of APP_MIC_DIAG_SETTLE_MS shows how
+ * the DC and the noise decay after the start (one line per 250 ms). Then five phases of
+ * APP_MIC_DIAG_MS each: A1 mic only, B1 mic with the speaker running on digital silence (clocks and
+ * amplifier run, no sound), A2 mic only, B2 speaker again, A3 mic only. Only the speaker is started
+ * and stopped between phases. Each phase prints peak and rms after the 100 Hz high-pass, rms of the
+ * raw signal with the mean removed, the mean, and the smallest and largest rms of a 100 ms window.
+ * All lines are printed at the end, none while the microphone runs. There is no automatic
+ * conclusion. Set 0 when it is no longer needed. Chosen by design.
  */
+/*
+ * Coupling probe (1 = run it once, after the record and play step, before the live monitor). It
+ * measures how much of what the speaker plays reaches the microphone, as a sweep of sine tones from
+ * 400 to 3000 Hz (14 frequencies, one amplitude, volume APP_MIC_LIVE_VOLUME), with microphone and
+ * speaker running together and the room silent. A first phase with no tone is the baseline.
+ * Per phase it prints the amplitude of the tone found in the microphone signal (Goertzel filter), the
+ * level at an unrelated frequency (the floor of the measurement), the rms, and the ratio of mic tone
+ * to output amplitude in per mille. A sharp peak at one frequency shows where the loop is most likely to ring.
+ * Run it twice with the same build: speaker connected, then speaker wires unplugged (the amplifier
+ * stays powered). The tone still in the microphone without the speaker means the path is not the
+ * speaker or the air. Takes about 24 s. Chosen by design.
+ */
+#ifndef APP_MIC_COUPLING
+#define APP_MIC_COUPLING 1
+#endif
 #ifndef APP_MIC_DIAG
-#define APP_MIC_DIAG 1
+#define APP_MIC_DIAG 0
 #endif
 #ifndef APP_MIC_DIAG_MS
 #define APP_MIC_DIAG_MS 3000U
+#endif
+#ifndef APP_MIC_DIAG_SETTLE_MS
+#define APP_MIC_DIAG_SETTLE_MS 5000U
 #endif
 #ifndef APP_MIC_LIVE_PLAY
 #define APP_MIC_LIVE_PLAY 1

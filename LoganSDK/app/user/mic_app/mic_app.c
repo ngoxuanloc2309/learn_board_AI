@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -1173,7 +1174,23 @@ static test_result_t run_record_play(speaker_t *spk, inmp441_t *mic)
             rec[k] = play_hpf_step(rec[k]);
         }
         compute_stats(rec, got, &st);
-        printf("[mic] playback high-pass 100 Hz: peak %d -> %d\n", (int)raw_peak, (int)st.peak);
+        printf("[mic] playback high-pass 100 Hz: peak %d to %d\n", (int)raw_peak, (int)st.peak);
+        {
+            int32_t head_peak = 0;
+            int32_t tail_peak = 0;
+
+            for (k = 0U; k < got; k++) {
+                const int32_t a = (rec[k] < 0) ? -(int32_t)rec[k] : (int32_t)rec[k];
+
+                if (k < (RATE_HZ / 5U)) {
+                    head_peak = (a > head_peak) ? a : head_peak;
+                } else {
+                    tail_peak = (a > tail_peak) ? a : tail_peak;
+                }
+            }
+            printf("[mic] record peak after high-pass: first 200 ms %d, rest %d (the gain follows the larger)\n",
+                   (int)head_peak, (int)tail_peak);
+        }
         if (st.peak < 1) {
             st.peak = 1;
         }
@@ -1297,53 +1314,116 @@ static test_result_t run_live_segments(speaker_t *spk, inmp441_t *mic)
 }
 
 #if APP_MIC_DIAG && APP_MIC_PLAY_HPF
-/* One period of 1 kHz at 16000 Hz is 16 samples: 3000 times sin(2 pi k / 16). */
-static const int16_t s_diag_tone[16] = { 0, 1148, 2121, 2772, 3000, 2772, 2121, 1148, 0, -1148, -2121, -2772, -3000, -2772, -2121, -1148 };
+#define DIAG_WINDOW      (RATE_HZ / 10U)    /* 100 ms window for the spread of the noise */
+#define DIAG_TRACE_WIN   (RATE_HZ / 4U)     /* 250 ms window of the start-up trace */
+#define DIAG_TRACE_MAX   24U
+#define DIAG_PHASES      5U
+#define DIAG_GUARD_MS    400U               /* dropped at the start of each phase, after a speaker start or stop */
+
 static int16_t s_diag_out[LIVE_CHUNK];
 
-typedef struct diag_result {
-    int32_t  peak;      /* largest absolute sample after the 100 Hz high-pass */
-    uint32_t ac_hpf;    /* rms after the 100 Hz high-pass */
-    uint32_t ac_raw;    /* rms with only the mean removed */
-    int32_t  dc;        /* mean of the raw samples */
-} diag_result_t;
+typedef struct diag_acc {
+    int64_t  sum;       /* sum of the raw samples */
+    uint64_t sq;        /* sum of squares of the raw samples */
+    uint64_t fsq;       /* sum of squares after the 100 Hz high-pass */
+    int32_t  peak;      /* largest absolute sample after the high-pass */
+    int32_t  raw_peak;  /* largest absolute raw sample */
+    uint32_t n;
+} diag_acc_t;
+
+typedef struct diag_phase_res {
+    diag_acc_t acc;
+    uint32_t   win_min;  /* smallest and largest rms_hpf of a 100 ms window in this phase */
+    uint32_t   win_max;
+    uint64_t   win_fsq;
+    uint32_t   win_n;
+} diag_phase_res_t;
+
+static void acc_add(diag_acc_t *a, int32_t v, int32_t f)
+{
+    const int32_t fa = (f < 0) ? -f : f;
+    const int32_t va = (v < 0) ? -v : v;
+
+    a->sum += v;
+    a->sq += (uint64_t)((int64_t)v * v);
+    a->fsq += (uint64_t)((int64_t)f * f);
+    if (fa > a->peak) {
+        a->peak = fa;
+    }
+    if (va > a->raw_peak) {
+        a->raw_peak = va;
+    }
+    a->n++;
+}
+
+static uint32_t acc_rms_hpf(const diag_acc_t *a)
+{
+    return (a->n == 0U) ? 0U : isqrt64(a->fsq / a->n);
+}
+
+/* Rms of the raw samples with only the mean removed. */
+static uint32_t acc_rms_raw(const diag_acc_t *a)
+{
+    uint64_t mean_sq;
+
+    if (a->n == 0U) {
+        return 0U;
+    }
+    mean_sq = (uint64_t)((a->sum * a->sum) / (int64_t)a->n);
+    return isqrt64((a->sq > mean_sq) ? ((a->sq - mean_sq) / a->n) : 0U);
+}
+
+static int32_t acc_dc(const diag_acc_t *a)
+{
+    return (a->n == 0U) ? 0 : (int32_t)(a->sum / (int64_t)a->n);
+}
 
 /*
- * One phase of the diagnostic. mode 0: microphone alone. mode 1: the speaker runs and is fed with
- * zeros. mode 2: the speaker plays a quiet 1 kHz tone. Returns true when the phase ran to the end.
+ * The diagnostic. The microphone is started ONCE and never stopped until the end, so its start-up
+ * transient happens once. First a trace of APP_MIC_DIAG_SETTLE_MS shows how the DC and the noise
+ * decay after the start. Then five phases of APP_MIC_DIAG_MS: mic only, mic with the speaker running
+ * on digital silence, mic only, speaker again, mic only. Only the speaker is started and stopped
+ * between phases; the microphone keeps being read, and the high-pass filter is never reset. Nothing is
+ * printed while the microphone runs, all lines come at the end. There is no automatic conclusion:
+ * the three mic only phases show how much the microphone alone varies, and only a clear step in the
+ * speaker phases beyond that spread means something.
  */
-static bool diag_phase(speaker_t *spk, inmp441_t *mic, unsigned mode, diag_result_t *res)
+static test_result_t run_diag(speaker_t *spk, inmp441_t *mic)
 {
-    const uint32_t total = (RATE_HZ / 1000U) * APP_MIC_DIAG_MS;
-    const bool spk_on = (mode != 0U);
+    static const char *const name[DIAG_PHASES] = { "A1 mic only", "B1 mic + speaker on silence", "A2 mic only",
+                                                   "B2 mic + speaker on silence", "A3 mic only" };
+    static const bool spk_on[DIAG_PHASES] = { false, true, false, true, false };
+    static diag_acc_t trace[DIAG_TRACE_MAX];
+    static diag_phase_res_t res[DIAG_PHASES];
+    uint32_t trace_windows = (RATE_HZ / 1000U) * APP_MIC_DIAG_SETTLE_MS / DIAG_TRACE_WIN;
+    uint32_t trace_total;
     uint32_t done = 0U;
-    int64_t sum = 0;
-    uint64_t sq = 0U;
-    uint64_t fsq = 0U;
-    int32_t fpeak = 0;
     bool first = true;
-    bool ok = true;
+    bool spk_running = false;
+    bool spk_failed = false;
     int ret;
+    unsigned k;
     size_t i;
 
-    memset(res, 0, sizeof(*res));
-    if (spk_on) {
-        for (i = 0U; i < LIVE_CHUNK; i++) {
-            s_diag_out[i] = (mode == 2U) ? s_diag_tone[i & 15U] : (int16_t)0;
-        }
-        if ((speaker_set_volume(spk, (uint8_t)APP_MIC_LIVE_VOLUME) != SPEAKER_OK) ||
-            (speaker_start(spk) != SPEAKER_OK)) {
-            return false;
-        }
+    if ((spk == NULL) || (mic == NULL)) {
+        printf("[mic] diag skipped: the speaker is not available\n");
+        return RESULT_SKIPPED;
     }
+    if (trace_windows > DIAG_TRACE_MAX) {
+        trace_windows = DIAG_TRACE_MAX;
+    }
+    trace_total = trace_windows * DIAG_TRACE_WIN;
+    memset(trace, 0, sizeof(trace));
+    memset(res, 0, sizeof(res));
+    memset(s_diag_out, 0, sizeof(s_diag_out));
+
+    printf("[mic] diag starts in 3 s: KEEP THE ROOM SILENT for about %u s (do not talk, do not touch the board). "
+           "Results are printed at the end\n",
+           (unsigned)((APP_MIC_DIAG_SETTLE_MS + (DIAG_PHASES * (APP_MIC_DIAG_MS + DIAG_GUARD_MS + 100U))) / 1000U));
+    sx_delay_ms(3000U);
+
     ret = inmp441_start(mic);
-    if (ret == INMP441_OK) {
-        ret = discard_settle(mic);
-    }
-    if ((ret == INMP441_OK) && spk_on && (write_silence(spk, APP_MIC_LIVE_PREROLL_MS) != SPEAKER_OK)) {
-        ret = INMP441_ERR_BUS;
-    }
-    while ((ret == INMP441_OK) && (done < total)) {
+    while ((ret == INMP441_OK) && (done < trace_total)) {
         size_t got = 0U;
 
         ret = inmp441_read(mic, s_chunk, LIVE_CHUNK, &got, READ_TIMEOUT_MS);
@@ -1354,86 +1434,302 @@ static bool diag_phase(speaker_t *spk, inmp441_t *mic, unsigned mode, diag_resul
             play_hpf_reset(s_chunk[0]);
             first = false;
         }
-        for (i = 0U; i < got; i++) {
-            int32_t v = s_chunk[i];
-            int32_t f = (int32_t)play_hpf_step(s_chunk[i]);
-            int32_t fa = (f < 0) ? -f : f;
-
-            sum += v;
-            sq += (uint64_t)((int64_t)v * v);
-            fsq += (uint64_t)((int64_t)f * f);
-            if (fa > fpeak) {
-                fpeak = fa;
-            }
+        for (i = 0U; (i < got) && (done < trace_total); i++) {
+            acc_add(&trace[done / DIAG_TRACE_WIN], (int32_t)s_chunk[i], (int32_t)play_hpf_step(s_chunk[i]));
+            done++;
         }
-        done += (uint32_t)got;
-        if (spk_on && (got > 0U)) {
-            size_t written = 0U;
+    }
 
-            if (speaker_write(spk, s_diag_out, LIVE_CHUNK, &written, WRITE_TIMEOUT_MS) != SPEAKER_OK) {
-                ok = false;
+    for (k = 0U; (k < DIAG_PHASES) && (ret == INMP441_OK); k++) {
+        diag_phase_res_t *r = &res[k];
+        uint32_t guard = (RATE_HZ / 1000U) * DIAG_GUARD_MS;
+        uint32_t left = (RATE_HZ / 1000U) * APP_MIC_DIAG_MS;
+
+        r->win_min = UINT32_MAX;
+        if (spk_on[k]) {
+            if ((speaker_set_volume(spk, (uint8_t)APP_MIC_LIVE_VOLUME) != SPEAKER_OK) ||
+                (speaker_start(spk) != SPEAKER_OK)) {
+                spk_failed = true;
+                break;
+            }
+            spk_running = true;
+            if (write_silence(spk, APP_MIC_LIVE_PREROLL_MS) != SPEAKER_OK) {
+                spk_failed = true;
                 break;
             }
         }
+        while ((ret == INMP441_OK) && (left > 0U)) {
+            size_t got = 0U;
+
+            ret = inmp441_read(mic, s_chunk, LIVE_CHUNK, &got, READ_TIMEOUT_MS);
+            if (ret != INMP441_OK) {
+                break;
+            }
+            for (i = 0U; (i < got) && (left > 0U); i++) {
+                const int32_t f = (int32_t)play_hpf_step(s_chunk[i]);
+
+                if (guard > 0U) {
+                    guard--;
+                    continue;
+                }
+                acc_add(&r->acc, (int32_t)s_chunk[i], f);
+                r->win_fsq += (uint64_t)((int64_t)f * f);
+                r->win_n++;
+                if (r->win_n >= DIAG_WINDOW) {
+                    const uint32_t w = isqrt64(r->win_fsq / r->win_n);
+
+                    if (w < r->win_min) {
+                        r->win_min = w;
+                    }
+                    if (w > r->win_max) {
+                        r->win_max = w;
+                    }
+                    r->win_fsq = 0U;
+                    r->win_n = 0U;
+                }
+                left--;
+            }
+            if (spk_on[k] && (got > 0U)) {
+                size_t written = 0U;
+
+                if (speaker_write(spk, s_diag_out, got, &written, WRITE_TIMEOUT_MS) != SPEAKER_OK) {
+                    spk_failed = true;
+                    break;
+                }
+            }
+        }
+        if (spk_running) {
+            (void)speaker_stop(spk);
+            spk_running = false;
+        }
+        if (spk_failed) {
+            break;
+        }
     }
     (void)inmp441_stop(mic);
-    if (spk_on) {
+    if (spk_running) {
         (void)speaker_stop(spk);
     }
-    if ((ret != INMP441_OK) || !ok || (done == 0U)) {
-        return false;
+    if ((ret != INMP441_OK) || spk_failed) {
+        printf("[mic] diag FAILED: mic code %d, speaker failed %d\n", ret, (int)spk_failed);
+        return RESULT_FAILED;
     }
-    {
-        const uint64_t mean_sq = (uint64_t)(sum * sum) / done;
-        const uint64_t ms = ((sq > mean_sq) ? (sq - mean_sq) : 0U) / done;
 
-        res->peak = fpeak;
-        res->ac_hpf = isqrt64(fsq / done);
-        res->ac_raw = isqrt64(ms);
-        res->dc = (int32_t)(sum / (int64_t)done);
+    printf("[mic] diag trace after the microphone start, one line per 250 ms (dc and rms of the raw signal, rms after the 100 Hz high-pass):\n");
+    for (k = 0U; k < trace_windows; k++) {
+        printf("[mic] diag trace t=%u ms: dc=%d ac=%u rms_hpf=%u peak_raw=%d\n", (unsigned)((k + 1U) * 250U),
+               (int)acc_dc(&trace[k]), (unsigned)acc_rms_raw(&trace[k]), (unsigned)acc_rms_hpf(&trace[k]),
+               (int)trace[k].raw_peak);
     }
+    for (k = 0U; k < DIAG_PHASES; k++) {
+        printf("[mic] diag %s: peak=%d rms_hpf=%u rms_raw=%u dc=%d win100_min=%u win100_max=%u\n", name[k],
+               (int)res[k].acc.peak, (unsigned)acc_rms_hpf(&res[k].acc), (unsigned)acc_rms_raw(&res[k].acc),
+               (int)acc_dc(&res[k].acc), (unsigned)((res[k].win_min == UINT32_MAX) ? 0U : res[k].win_min),
+               (unsigned)res[k].win_max);
+    }
+    return RESULT_OK;
+}
+#endif
+
+#if APP_MIC_COUPLING && APP_MIC_PLAY_HPF
+#define CPL_TABLE        256U
+#define CPL_FREQS        14U
+#define CPL_AMPS         1U
+#define CPL_PHASES       (1U + (CPL_FREQS * CPL_AMPS))
+#define CPL_GUARD_MS     300U
+#define CPL_MEASURE_MS   1000U
+#define CPL_SETTLE_MS    3500U
+#define CPL_PI           3.14159265f
+
+static int16_t s_cpl_sine[CPL_TABLE];
+static int16_t s_cpl_out[LIVE_CHUNK];
+
+typedef struct cpl_goertzel {
+    float coeff;
+    float s1;
+    float s2;
+} cpl_goertzel_t;
+
+typedef struct cpl_result {
+    uint32_t freq;
+    int32_t  out_amp;     /* digital amplitude sent to the speaker driver after the volume scaling */
+    uint32_t mic_amp;     /* amplitude of the tone found in the microphone signal at freq */
+    uint32_t off_amp;     /* amplitude found at 1.37 times freq, to show the floor of the measurement */
+    uint32_t rms_hpf;
+} cpl_result_t;
+
+static void cpl_gz_init(cpl_goertzel_t *g, float freq)
+{
+    g->coeff = 2.0f * cosf((2.0f * CPL_PI * freq) / (float)RATE_HZ);
+    g->s1 = 0.0f;
+    g->s2 = 0.0f;
+}
+
+static void cpl_gz_add(cpl_goertzel_t *g, float x)
+{
+    const float s = x + (g->coeff * g->s1) - g->s2;
+
+    g->s2 = g->s1;
+    g->s1 = s;
+}
+
+/* Amplitude of the sine component, same unit as the samples. */
+static uint32_t cpl_gz_amp(const cpl_goertzel_t *g, uint32_t n)
+{
+    float p = (g->s1 * g->s1) + (g->s2 * g->s2) - (g->coeff * g->s1 * g->s2);
+
+    if ((p < 0.0f) || (n == 0U)) {
+        return 0U;
+    }
+    return (uint32_t)((2.0f * sqrtf(p)) / (float)n);
+}
+
+/*
+ * One phase: the speaker plays a sine of freq and digital amplitude amp (before the volume) while
+ * the microphone keeps being read. The first CPL_GUARD_MS are dropped, the next CPL_MEASURE_MS are
+ * measured with two Goertzel filters (at freq, and at 1.37 times freq). amp 0 is the baseline.
+ * Returns false on an I/O error.
+ */
+static bool cpl_phase(speaker_t *spk, inmp441_t *mic, uint32_t freq, int32_t amp, cpl_result_t *res)
+{
+    const uint32_t phase_inc = (uint32_t)((((uint64_t)freq) << 32) / RATE_HZ);
+    uint32_t guard = (RATE_HZ / 1000U) * CPL_GUARD_MS;
+    uint32_t left = (RATE_HZ / 1000U) * CPL_MEASURE_MS;
+    const uint32_t measure_total = left;
+    uint32_t phase = 0U;
+    uint64_t fsq = 0U;
+    cpl_goertzel_t at_f;
+    cpl_goertzel_t at_off;
+    size_t i;
+
+    cpl_gz_init(&at_f, (float)freq);
+    cpl_gz_init(&at_off, ((float)freq) * 1.37f);
+    memset(res, 0, sizeof(*res));
+    res->freq = freq;
+    res->out_amp = (amp * (int32_t)APP_MIC_LIVE_VOLUME) / 100;
+
+    while (left > 0U) {
+        size_t got = 0U;
+        size_t written = 0U;
+
+        if (inmp441_read(mic, s_chunk, LIVE_CHUNK, &got, READ_TIMEOUT_MS) != INMP441_OK) {
+            return false;
+        }
+        for (i = 0U; i < got; i++) {
+            const int32_t f = (int32_t)play_hpf_step(s_chunk[i]);
+
+            s_cpl_out[i] = (int16_t)(((int32_t)s_cpl_sine[phase >> 24] * amp) / 32768);
+            phase += phase_inc;
+            if (guard > 0U) {
+                guard--;
+            } else if (left > 0U) {
+                cpl_gz_add(&at_f, (float)f);
+                cpl_gz_add(&at_off, (float)f);
+                fsq += (uint64_t)((int64_t)f * f);
+                left--;
+            }
+        }
+        if ((got > 0U) && (speaker_write(spk, s_cpl_out, got, &written, WRITE_TIMEOUT_MS) != SPEAKER_OK)) {
+            return false;
+        }
+    }
+    res->mic_amp = cpl_gz_amp(&at_f, measure_total);
+    res->off_amp = cpl_gz_amp(&at_off, measure_total);
+    res->rms_hpf = isqrt64(fsq / measure_total);
     return true;
 }
 
-static test_result_t run_diag(speaker_t *spk, inmp441_t *mic)
+/*
+ * Coupling probe, see APP_MIC_COUPLING in mic_app.h. Microphone and speaker both run all the time.
+ * Nothing is printed while they run. There is no automatic conclusion.
+ */
+static test_result_t run_coupling(speaker_t *spk, inmp441_t *mic)
 {
-    static const char *const name[4] = { "A mic only", "B mic + speaker playing silence",
-                                         "C mic + speaker playing 1 kHz tone", "A2 mic only again" };
-    static const unsigned mode[4] = { 0U, 1U, 2U, 0U };
-    diag_result_t r[4];
-    unsigned k;
+    static const uint32_t freqs[CPL_FREQS] = { 400U, 500U, 600U, 700U, 800U, 900U, 1000U, 1100U, 1200U, 1400U,
+                                               1600U, 2000U, 2500U, 3000U };
+    static const int32_t amps[CPL_AMPS] = { 3000 };
+    static cpl_result_t res[CPL_PHASES];
+    uint32_t settle = (RATE_HZ / 1000U) * CPL_SETTLE_MS;
+    bool first = true;
+    bool ok = true;
+    bool spk_running = false;
+    unsigned k = 0U;
+    unsigned fi;
+    unsigned ai;
+    size_t i;
+    int ret;
 
     if ((spk == NULL) || (mic == NULL)) {
-        printf("[mic] diag skipped: the speaker is not available\n");
+        printf("[mic] coupling skipped: the speaker is not available\n");
         return RESULT_SKIPPED;
     }
-    printf("[mic] diag starts in 3 s: KEEP THE ROOM SILENT for about %u s (do not talk, do not touch the board)\n",
-           (unsigned)((4U * (APP_MIC_DIAG_MS + 400U)) / 1000U));
-    sx_delay_ms(3000U);
-    for (k = 0U; k < 4U; k++) {
-        if (!diag_phase(spk, mic, mode[k], &r[k])) {
-            printf("[mic] diag phase %s FAILED, diagnostic stopped\n", name[k]);
-            return RESULT_FAILED;
-        }
-        printf("[mic] diag %s: peak=%d rms_hpf=%u rms_raw=%u dc=%d\n", name[k], (int)r[k].peak,
-               (unsigned)r[k].ac_hpf, (unsigned)r[k].ac_raw, (int)r[k].dc);
-        sx_delay_ms(300U);
+    for (i = 0U; i < CPL_TABLE; i++) {
+        s_cpl_sine[i] = (int16_t)(32767.0f * sinf((2.0f * CPL_PI * (float)i) / (float)CPL_TABLE));
     }
-    {
-        const uint32_t a = (r[0].ac_hpf > r[3].ac_hpf) ? r[0].ac_hpf : r[3].ac_hpf;
-        const uint32_t ab = (a < 1U) ? 1U : a;
+    memset(res, 0, sizeof(res));
+    memset(s_cpl_out, 0, sizeof(s_cpl_out));
 
-        if (r[1].ac_hpf > (2U * ab)) {
-            printf("[mic] diag result: with the speaker running on silence the microphone noise is more than 2 times higher (%u against %u). That points to an electrical cause (speaker clock, amplifier supply or wiring), not to sound.\n",
-                   (unsigned)r[1].ac_hpf, (unsigned)ab);
-        } else {
-            printf("[mic] diag result: the speaker running on silence does not raise the microphone noise by 2 times (%u against %u). An electrical cause is less likely; sound from the speaker or the loop gain is more likely.\n",
-                   (unsigned)r[1].ac_hpf, (unsigned)ab);
+    printf("[mic] coupling probe starts in 3 s: KEEP THE ROOM SILENT for about %u s. Tones play at volume %u percent. "
+           "Results are printed at the end\n",
+           (unsigned)((CPL_SETTLE_MS + (CPL_PHASES * (CPL_GUARD_MS + CPL_MEASURE_MS))) / 1000U),
+           (unsigned)APP_MIC_LIVE_VOLUME);
+    sx_delay_ms(3000U);
+
+    if ((speaker_set_volume(spk, (uint8_t)APP_MIC_LIVE_VOLUME) != SPEAKER_OK) || (speaker_start(spk) != SPEAKER_OK)) {
+        printf("[mic] coupling: speaker start failed\n");
+        return RESULT_FAILED;
+    }
+    spk_running = true;
+    ret = inmp441_start(mic);
+    if ((ret == INMP441_OK) && (write_silence(spk, APP_MIC_LIVE_PREROLL_MS) != SPEAKER_OK)) {
+        ret = INMP441_ERR_BUS;
+    }
+    while ((ret == INMP441_OK) && (settle > 0U)) {
+        size_t got = 0U;
+        size_t written = 0U;
+
+        ret = inmp441_read(mic, s_chunk, LIVE_CHUNK, &got, READ_TIMEOUT_MS);
+        if (ret != INMP441_OK) {
+            break;
         }
-        if (r[2].ac_hpf > (2U * ((r[1].ac_hpf < 1U) ? 1U : r[1].ac_hpf))) {
-            printf("[mic] diag: the tone raises the noise further (%u against %u in B), the sound or the tone current reaches the microphone.\n",
-                   (unsigned)r[2].ac_hpf, (unsigned)r[1].ac_hpf);
+        if (first && (got > 0U)) {
+            play_hpf_reset(s_chunk[0]);
+            first = false;
         }
+        for (i = 0U; i < got; i++) {
+            (void)play_hpf_step(s_chunk[i]);
+        }
+        settle = (settle > (uint32_t)got) ? (settle - (uint32_t)got) : 0U;
+        if ((got > 0U) && (speaker_write(spk, s_cpl_out, got, &written, WRITE_TIMEOUT_MS) != SPEAKER_OK)) {
+            ret = INMP441_ERR_BUS;
+        }
+    }
+    if (ret == INMP441_OK) {
+        ok = cpl_phase(spk, mic, freqs[6], 0, &res[k]);
+        k++;
+    }
+    for (fi = 0U; ok && (ret == INMP441_OK) && (fi < CPL_FREQS); fi++) {
+        for (ai = 0U; ok && (ai < CPL_AMPS); ai++) {
+            ok = cpl_phase(spk, mic, freqs[fi], amps[ai], &res[k]);
+            k++;
+        }
+    }
+    (void)inmp441_stop(mic);
+    if (spk_running) {
+        (void)speaker_stop(spk);
+    }
+    if ((ret != INMP441_OK) || !ok) {
+        printf("[mic] coupling FAILED: mic code %d, phase ok %d\n", ret, (int)ok);
+        return RESULT_FAILED;
+    }
+
+    printf("[mic] coupling results (amplitudes in 16 bit sample units; ratio is mic tone amplitude divided by output amplitude, in per mille):\n");
+    for (k = 0U; k < CPL_PHASES; k++) {
+        const uint32_t out = (res[k].out_amp > 0) ? (uint32_t)res[k].out_amp : 0U;
+
+        printf("[mic] coupling f=%u out_amp=%u mic_tone=%u offbin=%u rms_hpf=%u ratio_permille=%u\n",
+               (unsigned)res[k].freq, (unsigned)out, (unsigned)res[k].mic_amp, (unsigned)res[k].off_amp,
+               (unsigned)res[k].rms_hpf, (unsigned)((out > 0U) ? ((res[k].mic_amp * 1000U) / out) : 0U));
     }
     return RESULT_OK;
 }
@@ -1482,6 +1778,11 @@ static void mic_task(void *arg)
 #if APP_MIC_DIAG && APP_MIC_PLAY_HPF
     if ((r_meter == RESULT_OK) && speaker_free) {
         printf("[mic] diagnostic %s\n", result_text(run_diag(board_get_speaker(), board_get_mic())));
+    }
+#endif
+#if APP_MIC_COUPLING && APP_MIC_PLAY_HPF
+    if ((r_meter == RESULT_OK) && speaker_free) {
+        printf("[mic] coupling probe %s\n", result_text(run_coupling(board_get_speaker(), board_get_mic())));
     }
 #endif
     if ((r_meter == RESULT_OK) && (APP_MIC_LIVE_MS != 0U)) {
