@@ -1,6 +1,6 @@
 # Backend Protocol - AI Learning Device
 
-> Trạng thái: **BẢN NHÁP v0, chờ chủ dự án duyệt.** Chưa có dòng code nào theo tài liệu này.
+> Trạng thái: **v0.1.** Phiên 23 (sau khi chủ dự án trả lời): D7 đến D12 đã chốt theo đề xuất (mục 2). Các mục 3 đến 9 vẫn là DESIGN chờ thử. Chưa có dòng code nào theo tài liệu này.
 > Tài liệu này là hợp đồng giữa firmware (ESP32-S3) và backend (server). Cả hai bên cùng tuân theo file này.
 > Soạn: phiên 23 (2026-11-22). Bổ sung cho `Product_Construction.md` mục 6 đến 8 và `Firmware_Construction.md`.
 
@@ -36,16 +36,16 @@ Ngoài phạm vi v0 (không làm, không thiết kế chi tiết):
 | D4 | Bán song công: mic bật thì loa tắt, loa phát thì mic không gửi. Hủy lúc loa phát bằng chạm màn hình | DECIDED (hướng), số liệu chi tiết OPEN |
 | D5 | Truyền tải: một kết nối WebSocket, JSON cho tin điều khiển, nhị phân cho âm thanh | DESIGN (chờ duyệt) |
 | D6 | Định dạng âm thanh v0: PCM 16 bit, mono, 16 kHz, little endian | DESIGN (khớp `inmp441` và `speaker` hiện có) |
-| D7 | Khung âm thanh có tiêu đề 4 byte (loại, cờ, số thứ tự) | OPEN |
-| D8 | Phân tích JSON trên thiết bị: bật cJSON (`libs/cJSON`, chưa build) hay định dạng tối giản | OPEN |
-| D9 | Danh sách `action` ban đầu cho lượt trả lời | OPEN |
-| D10 | Chính sách riêng tư (lưu chữ bao lâu, ai xóa, quyền phụ huynh) | OPEN |
-| D11 | Cách hiển thị chữ trên màn hình (xem mục 11) | OPEN |
-| D12 | STT của server: mô hình cục bộ hay API (xem mục 12) | OPEN |
+| D7 | Khung âm thanh có tiêu đề 4 byte (loại, cờ, số thứ tự) | DECIDED (phiên 23) |
+| D8 | Phân tích JSON trên thiết bị: dùng cJSON (`libs/cJSON`, thêm vào `SRCS` của `libs`). Mức RAM thật chưa đo | DECIDED (phiên 23) |
+| D9 | Danh sách `action` ban đầu: để trống ở v0, thiết bị bỏ qua `action` lạ | DECIDED (phiên 23) |
+| D10 | Riêng tư cho bài thử: chạy trong LAN, STT cục bộ, không gửi âm thanh ra ngoài, không lưu âm thanh lâu dài, chữ chỉ in ra console. Chính sách đầy đủ (lưu bao lâu, ai xóa, phụ huynh) vẫn OPEN | DECIDED cho bài thử, OPEN cho sản phẩm |
+| D11 | Bộ vẽ chữ tự viết, có dấu tiếng Việt (xem mục 11). Font cụ thể OPEN | DECIDED (hướng), font OPEN |
+| D12 | STT chạy cục bộ trên PC dev. Mô hình cụ thể chọn sau khi đo trên WAV thu từ mic của chủ dự án (xem mục 12) | DECIDED (hướng), mô hình OPEN |
 
 ## 3. Truyền tải
 
-- Giao thức: WebSocket. Dev: `ws://<ip-may-chu>:<cong>/v1/voice` trong LAN (mạng router `192.168.30.0/24`, theo HandOver). Địa chỉ IP và cổng của máy dev: **OPEN** (chủ dự án cung cấp, không đoán).
+- Giao thức: WebSocket. Dev: `ws://<ip-may-chu>:<cong>/v1/voice` trong LAN (mạng router `192.168.30.0/24`, theo HandOver). Máy dev (GIVEN, chủ dự án gửi phiên 23): `192.168.30.101` (IPv4 do DHCP cấp, có thể đổi sau khi khởi động lại). Cổng: đề xuất 8765 (DESIGN, chưa duyệt).
 - Bản thật: `wss://` có kiểm chứng chỉ (`http_svc` hiện luôn kiểm CA bundle, WebSocket phải theo cùng nguyên tắc). Không có chế độ tắt kiểm chứng ở bản thật.
 - Thiết bị là client, server là bên lắng nghe.
 - Cách hiện thực trên firmware (đề xuất, cần duyệt): dùng `tcp_transport` có sẵn trong ESP-IDF và API `esp_transport_ws_*`, đặt trong `services/AI`. **VERIFIED-HDR (v5.4.3):** header `esp_transport_ws.h` có `esp_transport_ws_set_path`, `_set_subprotocol`, `_set_headers`, `_set_auth`, `_set_config`, `_send_raw` (chọn opcode TEXT hoặc BINARY), `_get_read_opcode`, `_get_fin_flag`, `_get_read_payload_len`, `_poll_connection_closed`. Cấu hình có cờ `propagate_control_frames`: nếu `false`, khung điều khiển do transport tự xử lý khi đọc.
@@ -57,6 +57,7 @@ Ngoài phạm vi v0 (không làm, không thiết kế chi tiết):
 
 - Khung **TEXT**: một đối tượng JSON, UTF-8, có trường `type`. Thiết bị và server **bỏ qua** tin có `type` lạ và trường lạ (để mở rộng về sau không phá bản cũ).
 - Khung **BINARY**: âm thanh, theo mục 5.
+- **Văn bản tiếng Việt (DECIDED phiên 23):** server chuẩn hóa mọi chữ gửi xuống về **NFC** (chữ có dấu là ký tự dựng sẵn, không tách dấu rời) và gửi JSON UTF-8 nguyên, **không escape `\uXXXX`** (Python: `ensure_ascii=False`). Lý do: bộ vẽ chữ trên thiết bị tra bảng theo ký tự dựng sẵn.
 
 ### 4.1. Tin điều khiển (JSON)
 
@@ -65,7 +66,7 @@ Thiết bị gửi lên server:
 | `type` | Trường | Gửi khi |
 |---|---|---|
 | `hello` | `protocol_version` (số nguyên, v0 = 0), `device_id`, `fw`, `audio` (`codec`, `rate`, `channels`, `frame_ms`) | Ngay sau khi mở kết nối |
-| `listen_start` | `turn` (số nguyên tăng dần do thiết bị đặt), `reason` = `"touch"` | Người dùng chạm bắt đầu nói |
+| `listen_start` | `turn` (số nguyên tăng dần do thiết bị đặt), `reason` = `"touch"`, `lang` = `"vi"` hoặc `"en"` (DECIDED phiên 23; thiết bị đặt, server dùng chọn ngôn ngữ STT) | Người dùng chạm bắt đầu nói |
 | `listen_stop` | `turn`, `reason` = `"touch"`, `"vad"`, `"timeout"`, `"max_length"` | Thiết bị dừng gửi âm thanh của lượt này |
 | `abort` | `turn` | Hủy lượt (chạm hủy lúc chờ hoặc lúc loa đang phát) |
 
@@ -98,10 +99,10 @@ server -> device  {"type":"stt_result","turn":1,"text":"hello world","final":tru
 - Hướng lên (mic): PCM signed 16 bit little endian, mono, 16 kHz. **HW:** đây là định dạng `inmp441` đang xuất (lấy 16 bit trên của mẫu 24 bit, tại 16000 Hz) và `speaker` đang nhận. Ngoài ra nên bỏ DC và lọc cao thông 100 Hz trước khi gửi (như `mic_app` đã làm cho bản phát lại), việc này làm ở firmware.
 - Khối: 20 ms = 320 mẫu = 640 byte (DESIGN). Khối lớn hơn (40 ms) giảm số gói nhưng tăng độ trễ.
 - Lưu lượng: 16000 mẫu/s x 2 byte = 32 KB/s mỗi chiều, khoảng 256 kbps (tính, chưa đo trên board).
-- Hướng xuống (TTS, giai đoạn sau): cùng định dạng, server tự đổi tần số lấy mẫu cho khớp.
+- Hướng xuống (TTS, giai đoạn sau): cùng định dạng, server tự đổi tần số lấy mẫu cho khớp. **Quy tắc (DECIDED phiên 23):** server gửi âm thanh về đúng nhịp thực (20 ms mỗi 20 ms), không gửi dồn, vì bộ đệm phát trên thiết bị có hạn. Một dự án bên thứ ba ghi bộ đệm phát của họ là 1,5 s; đó là số của họ, không phải của board này, bộ đệm của board này chưa quyết.
 - Trường `codec` trong `hello` dành cho Opus về sau. v0 chỉ có `pcm_s16le`.
 
-Khung nhị phân (D7, OPEN, đề xuất): 4 byte tiêu đề rồi tới PCM.
+Khung nhị phân (D7, DECIDED phiên 23: có tiêu đề): 4 byte tiêu đề rồi tới PCM.
 
 | Byte | Nội dung |
 |---|---|
@@ -189,29 +190,38 @@ Hành vi:
 
 ## 10. Riêng tư và an toàn cho trẻ em
 
-Chính sách (D10) là OPEN. Điểm xuất phát đề xuất, chờ chủ dự án đặt:
+Bài thử (D10, DECIDED phiên 23): chạy trong LAN, STT cục bộ, âm thanh không đi ra ngoài, không lưu lâu dài, chữ chỉ in ra console. Chính sách cho sản phẩm vẫn OPEN. Điểm xuất phát đề xuất, chờ chủ dự án đặt:
 
 - Mặc định server không lưu âm thanh.
 - Chữ nhận dạng lưu hay không, bao lâu, ai xóa, kiểm soát phụ huynh thế nào: chủ dự án quyết.
-- Khi dùng dịch vụ bên thứ ba cho STT, LLM, TTS, âm thanh và nội dung của bé sẽ đi tới họ: phải được chủ dự án chấp nhận rõ ràng trước khi dùng (xem `Product_Construction.md` mục 8.2 và 8.3).
+- Khi dùng dịch vụ bên thứ ba cho STT, LLM, TTS, âm thanh và nội dung của bé sẽ đi tới họ: phải được chủ dự án chấp nhận rõ ràng trước khi dùng (xem `Product_Construction.md` mục 8.2 và 8.3). Điều này gồm cả server chính thức xiaozhi.me: firmware xiaozhi nối mặc định tới đó (theo nguồn web, chưa đọc mã nguồn), nên dùng nó nghĩa là âm thanh của bé đi tới dịch vụ ngoài.
 - Lớp an toàn nội dung nằm ở server (giai đoạn LLM). Thiết bị chỉ thực hiện `action` thuộc danh sách cho phép (D9), `action` lạ bị bỏ qua.
 
 ## 11. Hiển thị chữ trên màn hình (D11)
 
-**Phát hiện từ repo (phiên 23):** `screenHMI` chỉ có `screen_hmi_fill_rect` và `screen_hmi_draw_bitmap`. Repo không có font hay hàm vẽ chữ. Ví dụ in đoạn nói lên màn hình cần có cách vẽ chữ trước. Hai hướng:
+**Phát hiện từ repo (phiên 23):** `screenHMI` chỉ có `screen_hmi_fill_rect` và `screen_hmi_draw_bitmap`. Repo không có font hay hàm vẽ chữ.
 
-| Hướng | Ưu | Nhược |
-|---|---|---|
-| A. Bộ vẽ chữ nhỏ tự viết trong repo (font bitmap ASCII, vẽ qua `draw_bitmap`) | Không thêm dependency, nhỏ, đủ cho thử nghiệm tiếng Anh | Không có chữ có dấu tiếng Việt, phải tự quản lý xuống dòng, bố cục |
-| B. LVGL (đã nằm trong kế hoạch) | Là hướng lâu dài, có font và bố cục | Dependency lớn, cần quyết định PSRAM và bộ đệm khung (một khung 480x320x2 byte là 307200 byte, tính từ kích thước), cần duyệt, tốn thời gian |
+**Cập nhật phiên 23 (sau khi chủ dự án trả lời): bài thử phải in được tiếng Việt có dấu.** Bản v0 ghi hướng ASCII là không đủ. Hướng chọn: bộ vẽ chữ tự viết (hướng A) có dấu tiếng Việt. LVGL (hướng B) vẫn là hướng lâu dài cho giai đoạn UI, không làm ở bài thử.
 
-Đề xuất cho bài thử: hướng A (ASCII, tiếng Anh) vì môn đầu là English và bài thử chỉ cần in chữ nhận dạng. LVGL làm ở giai đoạn UI. **Cần chủ dự án duyệt**, vì thêm một thành phần mới vào `modules` hoặc `utils`.
+Việc cần có:
+
+1. **Font có dấu.** 95 ký tự ASCII cộng 134 ký tự ngoài ASCII. Cách tính 134: 12 nguyên âm (a, ă, â, e, ê, i, o, ô, ơ, u, ư, y) x 6 dạng (không dấu và 5 dấu thanh) x 2 kiểu hoa thường = 144, trừ 12 ký tự đã là ASCII, cộng đ và Đ. Tổng 229 ký tự x 48 byte (ô 16x24, 1 bit) = 10992 byte, khoảng 11 KB flash (**tính, chưa đo**). Chuyển TTF thành mảng C bằng script Python **ngoài firmware**. Font cụ thể chưa chọn. **Phải kiểm giấy phép của font trước khi đưa vào repo** (chưa kiểm). Rủi ro chưa kiểm: dấu chồng (ệ, ữ, Ấ) có thể nhìn rối ở ô 16x24 1 bit.
+2. **Bộ vẽ chữ.** Giải mã UTF-8, tra bảng, vẽ qua `screen_hmi_draw_bitmap`. Theo bảng phụ thuộc, `modules` không được `REQUIRES` module khác, nên bộ vẽ chữ nhận hàm vẽ bitmap qua con trỏ hàm (cùng kiểu `screen_hmi_delay_fn_t`) thay vì phụ thuộc `screenHMI`. **Là thành phần mới, cần chủ dự án duyệt trước khi viết.** Màn hình 480x320 với ô 16x24 cho 30 cột x 13 dòng (tính từ kích thước).
+3. **Server** chuẩn hóa NFC và gửi JSON UTF-8 nguyên (mục 4).
+4. **`lang`** trong `listen_start` (mục 4.1).
 
 ## 12. Server
 
 - Ngôn ngữ đề xuất: Python (dễ đọc, nhiều thư viện âm thanh). Đặt ở thư mục mới ngoài `LoganSDK` (ví dụ `backend/`), **cần chủ dự án duyệt** trước khi tạo.
 - Cấu trúc: mỗi khâu (VAD, STT, sau này LLM và TTS) là một module cùng hợp đồng vào ra, nguồn (cục bộ hay API) chọn bằng cấu hình. Cách chia này lấy ý từ server cộng đồng của xiaozhi (theo tìm hiểu phiên 22 và 23, chưa tự đọc mã nguồn của họ).
-- STT cho bài thử (D12, OPEN): chủ dự án chưa chọn. Hai hướng: mô hình cục bộ trên PC (không tốn tiền, nhưng cần cài đặt và chưa có số đo chất lượng với giọng trẻ em và tiếng Anh), hoặc API trả tiền (cần khóa và có chi phí). Tôi chưa tra giá hay chất lượng từng lựa chọn nên không đề xuất tên cụ thể.
+- STT cho bài thử (D12, DECIDED hướng phiên 23): chạy cục bộ trên PC dev, âm thanh không ra khỏi LAN. Mô hình cụ thể **OPEN**, chọn sau khi đo trên WAV thu từ chính mic của chủ dự án.
+- **Ngôn ngữ chính là tiếng Việt** (phiên 23). Thông tin tra được (nguồn web, **chưa kiểm chứng, chưa đo**):
+  - README server xiaozhi cộng đồng chỉ liệt kê FunASR hỗ trợ Quan Thoại, Quảng Đông, Anh, Nhật, Hàn. Chủ dự án thấy xiaozhi nhận được tiếng Việt, nên đó là mô hình mặc định của server cộng đồng chứ không phải giới hạn của xiaozhi.
+  - Firmware xiaozhi nối mặc định tới server chính thức xiaozhi.me, người dùng cá nhân dùng mô hình Qwen thời gian thực miễn phí. Mô hình nào chạy cho tiếng Việt và ai trả chi phí: **chưa có nguồn**.
+  - Một dự án bên thứ ba cho thiết bị tiếng Việt dùng Qwen3-ASR và VieNeu TTS.
+  - Ứng viên khác: Whisper tinh chỉnh cho tiếng Việt (PhoWhisper, EraX-WoW-Turbo; README ghi huấn luyện trên giọng người lớn, có thể khó với giọng trẻ nhỏ), Zipformer-vi qua sherpa-onnx (khoảng 75 MB, chạy CPU).
+  - Mọi số WER là do tác giả tự báo, chưa đo trên mic và giọng của chủ dự án, chưa có số cho giọng trẻ em.
+- PC dev (GIVEN, chủ dự án gửi): Ryzen 5 6600H, RAM 16 GB (15,2 GB dùng được), NVIDIA RTX 3050 Ti Laptop 4 GB VRAM, Windows, Python đã cài (phiên bản chưa báo), IPv4 `192.168.30.101` (DHCP, có thể đổi). Dùng để chọn mô hình: từng ứng viên phải được kiểm kích thước trước khi cài.
 - Thiết bị giả bằng Python (phát một file WAV lên server) để kiểm server khi chưa có board.
 
 ## 13. Bài thử đầu tiên (đề xuất, chờ duyệt)
@@ -222,16 +232,20 @@ Chia nhỏ, mỗi bước có tiêu chí qua và chủ dự án tự build, gử
 
 | Bước | Việc | Tiêu chí qua |
 |---|---|---|
-| 0 | Duyệt tài liệu này và các mục OPEN | Chủ dự án chốt D7 đến D12 |
+| 0 | Duyệt tài liệu này và các mục OPEN | **Xong phiên 23:** chủ dự án chốt D7 đến D12 theo đề xuất |
 | 1 | Server Python echo cộng thiết bị giả (WAV) | Server nhận khung, ghi ra file WAV nghe được, trả `stt_result` giả |
 | 2 | Firmware: nút chạm trên màn hình, máy trạng thái, VAD, vẽ chữ. **Chưa có mạng**, in log độ dài lượt và lý do kết thúc | Chạm bắt đầu, chạm dừng, VAD cắt đúng ở 30 cm trong phòng yên (tiêu chí số: chủ dự án đặt) |
 | 3 | Firmware nối server echo, stream khối PCM | Nghe lại bản server lưu: sạch, đủ, không mất khối (số thứ tự liên tục); đo độ trễ và mất gói |
-| 4 | Server thêm STT thật | `stt_result` đúng với câu nói tiếng Anh |
-| 5 | Màn hình in `text` nhận được | Đoạn nói hiện đúng trên màn hình sau khi dừng |
+| 4a | Thử vài mô hình STT offline trên PC bằng WAV thu từ mic board (từng mô hình một, theo dõi RAM và VRAM) | Chọn được mô hình theo số đo trên giọng của chủ dự án; ghi thời gian xử lý |
+| 4 | Server thêm STT thật (mô hình đã chọn ở 4a) | `stt_result` đúng với câu nói tiếng Việt (có `lang`) |
+| 5 | Màn hình in `text` nhận được, tiếng Việt có dấu | Đoạn nói hiện đúng, đủ dấu, trên màn hình sau khi dừng |
 
 Cần chủ dự án duyệt trước khi bước 2 và 3 bắt đầu (tổng hợp): `tcp_transport` vào `REQUIRES` của `services`, API đọc MAC trong `sx_*`, cách phân tích JSON (D8), bộ đệm giữa mic và mạng (StreamBuffer của FreeRTOS hoặc vòng đệm ở PSRAM), bộ vẽ chữ (D11), thư mục `backend/`.
 
 ## 14. Câu hỏi còn mở (tổng hợp)
+
+Cập nhật phiên 23: câu 1 (IP máy dev: `192.168.30.101`, cùng LAN), câu 2 đến 5 và câu 6 (D7 đến D11), câu 7 (D12: cục bộ) đã trả lời ở mục 2. Còn mở: font (D11), mô hình STT (D12), chính sách riêng tư cho sản phẩm (D10), cổng của server (đề xuất 8765, DESIGN), chế độ truy cập PSRAM (đề xuất `CONFIG_SPIRAM_USE_CAPS_ALLOC` kèm `heap_caps_malloc(MALLOC_CAP_SPIRAM)`, chủ dự án chưa quyết), và các câu 8, 9, 10 dưới đây. Danh sách gốc của bản v0:
+
 
 1. IP và cổng của máy dev; máy dev là PC Windows của chủ dự án trong cùng LAN với board?
 2. D7: có tiêu đề 4 byte cho khung âm thanh không?
