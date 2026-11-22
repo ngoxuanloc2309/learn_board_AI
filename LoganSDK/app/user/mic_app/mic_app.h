@@ -71,9 +71,17 @@
 #ifndef APP_MIC_LIVE_GAIN
 #define APP_MIC_LIVE_GAIN 3
 #endif
-/* Howl guard: if the microphone peak stays at or above this for 300 ms, the speaker is muted for the time below. */
-#ifndef APP_MIC_LIVE_HOWL_PEAK
-#define APP_MIC_LIVE_HOWL_PEAK 20000
+/*
+ * Howl guard trigger: the rms of the output (the microphone after the 100 Hz filter, times
+ * APP_MIC_LIVE_GAIN, limited to 16 bit) over a window of 100 ms. When it stays at or above this for
+ * 300 ms the guard mutes the speaker briefly to test whether it is feedback or a voice (see the end of
+ * this file). Speech has a peak about four times its rms, so a loud voice reaches the full scale with
+ * its peaks at an rms of about a third of it, while a howl is a tone that grows until it clips, so its
+ * rms is 20000 or more. A log with the microphone at the mouth gave about 8400 at the speaker (gain 3).
+ * The trigger level is chosen by design, not measured on a howl.
+ */
+#ifndef APP_MIC_LIVE_HOWL_RMS
+#define APP_MIC_LIVE_HOWL_RMS 16000
 #endif
 #ifndef APP_MIC_LIVE_MUTE_MS
 #define APP_MIC_LIVE_MUTE_MS 3000U
@@ -137,10 +145,12 @@
  *   "mmm" or a low "ooo" (voice pitch about 85 to 255 Hz) lifts LOW; a long "aaa" (vowel
  *   resonances near 700 and 1100 Hz) lifts MID; a hissing "sss" (energy mostly above 4 kHz) lifts
  *   HIGH; a clap lifts all three. Silence should keep all three low.
- *   With APP_MIC_LIVE_PLAY the samples (DC offset removed, times APP_MIC_LIVE_GAIN) are written to
- *   the speaker at APP_MIC_LIVE_VOLUME. Speaker and microphone are close, so this can howl. The howl
- *   guard mutes the speaker for APP_MIC_LIVE_MUTE_MS when the microphone is loud for 300 ms in a
- *   row. The task does not end while the monitor runs (by default never).
+ *   With APP_MIC_LIVE_PLAY the samples (100 Hz high-pass, times APP_MIC_LIVE_GAIN) are written to
+ *   the speaker at APP_MIC_LIVE_VOLUME. Speaker and microphone are close, so this can howl. When the
+ *   output rms stays very high for 300 ms the howl guard mutes the speaker for 400 ms and listens: if the
+ *   microphone is still above APP_MIC_LIVE_GUARD_VOICE_PEAK (set in mic_app.c) it was a voice and the
+ *   speaker comes back, otherwise it was feedback and the speaker stays muted for
+ *   APP_MIC_LIVE_MUTE_MS in total. The task does not end while the monitor runs (by default never).
  *
  * Microphone wiring (GIVEN by the owner, see board.h): SCK to GPIO 10, WS to GPIO 11, SD to
  * GPIO 12, L/R to GND, a 3.3 V supply. The task ends when the tests (and the live monitor) are done. Wi-Fi and HTTP are
