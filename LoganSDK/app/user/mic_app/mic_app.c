@@ -454,6 +454,27 @@ static int16_t play_hpf_step(int16_t x)
 }
 #endif
 
+/*
+ * Two switches for finding out why the live playback sounds worse than the recorded playback.
+ * APP_MIC_LIVE_TEST_TONE 1 sends a steady 1 kHz tone (amplitude 3000 before the gain) through the whole
+ * live path instead of the microphone: if it is clean for a minute, the streaming to the speaker has
+ * no gaps and the difference lies in the level or the microphone side; clicks or crackle mean that
+ * the speaker runs out of data. APP_MIC_LIVE_BANDS 0 switches the eight measuring bands off, which are
+ * the heaviest part of the loop; the line then shows only peak, ac and dc. The line "[mic] load" tells
+ * how much of each second the loop waits for the microphone and for the speaker.
+ */
+#ifndef APP_MIC_LIVE_TEST_TONE
+#define APP_MIC_LIVE_TEST_TONE 0
+#endif
+#ifndef APP_MIC_LIVE_BANDS
+#define APP_MIC_LIVE_BANDS 1
+#endif
+
+#if APP_MIC_LIVE_TEST_TONE
+/* One period of 1 kHz at 16000 Hz is 16 samples: 3000 times sin(2 pi k / 16). */
+static const int16_t s_tone[16] = { 0, 1148, 2121, 2772, 3000, 2772, 2121, 1148, 0, -1148, -2121, -2772, -3000, -2772, -2121, -1148 };
+#endif
+
 typedef struct live_acc {
     int32_t  peak;
     int64_t  sum;
@@ -464,6 +485,21 @@ typedef struct live_acc {
 
 static void live_print(const live_acc_t *a, bool playing, bool muted)
 {
+#if !APP_MIC_LIVE_BANDS
+    {
+        uint64_t ms;
+        uint64_t mean;
+
+        if (a->n == 0U) {
+            return;
+        }
+        mean = (uint64_t)(a->sum * a->sum) / a->n;
+        ms = ((a->sq > mean) ? (a->sq - mean) : 0U) / a->n;
+        printf("[mic] peak=%5d ac=%5u dc=%6d | bands off | %s\n", (int)a->peak, (unsigned)isqrt64(ms),
+               (int)(a->sum / (int64_t)a->n), muted ? "MUTED by howl guard" : (playing ? "playing" : "print only"));
+        return;
+    }
+#else
     char bar[BAND_COUNT][BAR_WIDTH + 1U];
     uint32_t level[BAND_COUNT];
     uint64_t mean_sq;
@@ -501,6 +537,7 @@ static void live_print(const live_acc_t *a, bool playing, bool muted)
            s_band_name[2], (unsigned)level[2], s_band_name[3], (unsigned)level[3],
            s_band_name[4], (unsigned)level[4], s_band_name[5], (unsigned)level[5],
            s_band_name[6], (unsigned)level[6], s_band_name[7], (unsigned)level[7], (unsigned)covered);
+#endif
 }
 
 /*
@@ -648,6 +685,13 @@ static test_result_t run_live_monitor(speaker_t *spk, inmp441_t *mic, bool speak
     howl_guard_t guard;
     int32_t win_in_peak = 0;
     uint64_t win_out_sq = 0U;
+    uint32_t read_ms = 0U;
+    uint32_t write_ms = 0U;
+#if APP_MIC_LIVE_TEST_TONE
+    uint32_t tone_phase = 0U;
+#endif
+    uint32_t t0 = 0U;
+    uint32_t t1 = 0U;
 #if !APP_MIC_PLAY_HPF
     int32_t dc_q8 = 0;
 #endif
@@ -668,6 +712,9 @@ static test_result_t run_live_monitor(speaker_t *spk, inmp441_t *mic, bool speak
         printf("[mic] live playback ON: volume %u percent, gain x%d. If you hear a howl, move the speaker "
                "away from the microphone or lower APP_MIC_LIVE_VOLUME\n",
                (unsigned)APP_MIC_LIVE_VOLUME, (int)APP_MIC_LIVE_GAIN);
+#if APP_MIC_LIVE_TEST_TONE
+        printf("[mic] TEST TONE: a 1 kHz tone replaces the microphone in the live path, listen for clicks\n");
+#endif
 #if APP_MIC_PLAY_HPF
         printf("[mic] playback high-pass 100 Hz is ON (APP_MIC_PLAY_HPF)\n");
 #else
@@ -710,12 +757,17 @@ static test_result_t run_live_monitor(speaker_t *spk, inmp441_t *mic, bool speak
         size_t i;
         const bool playing = spk_started && (sret == SPEAKER_OK);
 
+        sx_get_time_ms(&t0);
         ret = inmp441_read(mic, s_chunk, LIVE_CHUNK, &got, READ_TIMEOUT_MS);
+        sx_get_time_ms(&t1);
+        read_ms += t1 - t0;
         if (ret != INMP441_OK) {
             break;
         }
         if (first && (got > 0U)) {
+#if APP_MIC_LIVE_BANDS
             bands_reset(s_chunk[0]);
+#endif
 #if APP_MIC_PLAY_HPF
             play_hpf_reset(s_chunk[0]);
 #else
@@ -735,7 +787,9 @@ static test_result_t run_live_monitor(speaker_t *spk, inmp441_t *mic, bool speak
             }
             acc.sum += v;
             acc.sq += (uint64_t)((int64_t)v * v);
+#if APP_MIC_LIVE_BANDS
             bands_step(s_chunk[i], acc.band_sq);
+#endif
 
 #if APP_MIC_PLAY_HPF
             /* Output: 100 Hz high-pass (it also removes DC), then the gain, with saturation. */
@@ -744,6 +798,10 @@ static test_result_t run_live_monitor(speaker_t *spk, inmp441_t *mic, bool speak
             /* Output: remove the slow DC estimate, then the gain, with saturation. */
             dc_q8 += ((v * 256) - dc_q8) / 256;
             f = v - (dc_q8 / 256);
+#endif
+#if APP_MIC_LIVE_TEST_TONE
+            f = (int32_t)s_tone[tone_phase];
+            tone_phase = (tone_phase + 1U) & 15U;
 #endif
             out = f * (int32_t)APP_MIC_LIVE_GAIN;
             fa = (f < 0) ? -f : f;
@@ -763,7 +821,10 @@ static test_result_t run_live_monitor(speaker_t *spk, inmp441_t *mic, bool speak
         if (playing && !guard_muted(&guard) && (got > 0U)) {
             size_t written = 0U;
 
+            sx_get_time_ms(&t0);
             sret = speaker_write(spk, s_chunk, got, &written, WRITE_TIMEOUT_MS);
+            sx_get_time_ms(&t1);
+            write_ms += t1 - t0;
             if (sret != SPEAKER_OK) {
                 printf("[mic] speaker_write failed: %d, the monitor prints only from now on\n", sret);
             }
@@ -805,6 +866,16 @@ static test_result_t run_live_monitor(speaker_t *spk, inmp441_t *mic, bool speak
             windows++;
             if (windows >= LIVE_REPORT_WINDOWS) {
                 live_print(&acc, playing, guard_muted(&guard));
+                {
+                    const uint32_t span = LIVE_REPORT_WINDOWS * 100U;
+                    const uint32_t idle = read_ms + write_ms;
+
+                    printf("[mic] load: per %u ms the loop waited %u ms for the microphone and %u ms for the speaker, own work about %u ms\n",
+                           (unsigned)span, (unsigned)read_ms, (unsigned)write_ms,
+                           (unsigned)((idle < span) ? (span - idle) : 0U));
+                }
+                read_ms = 0U;
+                write_ms = 0U;
                 memset(&acc, 0, sizeof(acc));
                 windows = 0U;
             }
