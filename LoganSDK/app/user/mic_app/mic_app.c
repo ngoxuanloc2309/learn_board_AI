@@ -504,6 +504,125 @@ static void live_print(const live_acc_t *a, bool playing, bool muted)
 }
 
 /*
+ * Howl guard. The speaker is close to the microphone, so when the output stays loud the guard cannot
+ * tell by the level alone whether it is feedback or a person talking loudly into the microphone (a
+ * log with speech at 5 cm tripped the old guard and silenced the speaker although there was no howl).
+ * It therefore tests it: when the output peak is above APP_MIC_LIVE_HOWL_PEAK for HOWL_WINDOWS windows
+ * in a row, the speaker is muted for GUARD_SETTLE_WINDOWS (the audio already queued in the I2S buffers
+ * still plays during that time), then the input peak is watched for GUARD_PROBE_WINDOWS. If the input
+ * is still at least half as loud as it was, it was a voice and the speaker comes back at once. If it
+ * fell, the loop was feedback and the speaker stays muted until APP_MIC_LIVE_MUTE_MS is over. After a
+ * voice verdict the guard waits GUARD_COOLDOWN_WINDOWS before it can trip again. A window is
+ * LIVE_WINDOW samples (100 ms). All the times here are chosen by design, not measured.
+ */
+#define GUARD_SETTLE_WINDOWS   2U
+#define GUARD_PROBE_WINDOWS    2U
+#define GUARD_COOLDOWN_WINDOWS 10U
+
+typedef enum guard_phase {
+    GUARD_ARMED = 0,     /* speaker on, watching the output level */
+    GUARD_SETTLE,        /* speaker muted, waiting for the queued audio to play out */
+    GUARD_PROBE,         /* speaker muted, measuring the input */
+    GUARD_HOLD           /* feedback confirmed, speaker muted until the time is over */
+} guard_phase_t;
+
+typedef enum guard_event {
+    GUARD_EVENT_NONE = 0,
+    GUARD_EVENT_TRIPPED,     /* the speaker was just muted for the test */
+    GUARD_EVENT_VOICE,       /* test says voice, the speaker must be switched on again */
+    GUARD_EVENT_FEEDBACK,    /* test says feedback, the speaker stays muted */
+    GUARD_EVENT_RELEASED     /* hold time is over, the speaker must be switched on again */
+} guard_event_t;
+
+typedef struct howl_guard {
+    guard_phase_t phase;
+    uint32_t loud;           /* loud windows in a row */
+    uint32_t left;           /* windows left in the current phase */
+    uint32_t cool;           /* windows left in which the guard cannot trip */
+    int32_t trigger_in;      /* largest input peak while the output was loud */
+    int32_t probe_in;        /* largest input peak during the probe */
+} howl_guard_t;
+
+static void guard_reset(howl_guard_t *g)
+{
+    memset(g, 0, sizeof(*g));
+}
+
+/* True while the speaker must not be written. */
+static bool guard_muted(const howl_guard_t *g)
+{
+    return g->phase != GUARD_ARMED;
+}
+
+/*
+ * Called once per window with the largest input sample (after the high-pass, before the gain) and the
+ * largest output sample (after the gain, before the limit) of that window.
+ */
+static guard_event_t guard_window(howl_guard_t *g, int32_t in_peak, int32_t out_peak)
+{
+    switch (g->phase) {
+    case GUARD_ARMED:
+        if (g->cool > 0U) {
+            g->cool--;
+            g->loud = 0U;
+            return GUARD_EVENT_NONE;
+        }
+        if (out_peak >= (int32_t)APP_MIC_LIVE_HOWL_PEAK) {
+            if (in_peak > g->trigger_in) {
+                g->trigger_in = in_peak;
+            }
+            g->loud++;
+            if (g->loud >= HOWL_WINDOWS) {
+                g->phase = GUARD_SETTLE;
+                g->left = GUARD_SETTLE_WINDOWS;
+                g->probe_in = 0;
+                g->loud = 0U;
+                return GUARD_EVENT_TRIPPED;
+            }
+        } else {
+            g->loud = 0U;
+            g->trigger_in = 0;
+        }
+        return GUARD_EVENT_NONE;
+    case GUARD_SETTLE:
+        if (--g->left == 0U) {
+            g->phase = GUARD_PROBE;
+            g->left = GUARD_PROBE_WINDOWS;
+        }
+        return GUARD_EVENT_NONE;
+    case GUARD_PROBE:
+        if (in_peak > g->probe_in) {
+            g->probe_in = in_peak;
+        }
+        if (--g->left == 0U) {
+            if ((g->probe_in * 2) >= g->trigger_in) {
+                g->phase = GUARD_ARMED;
+                g->cool = GUARD_COOLDOWN_WINDOWS;
+                g->trigger_in = 0;
+                return GUARD_EVENT_VOICE;
+            }
+            {
+                const uint32_t used = GUARD_SETTLE_WINDOWS + GUARD_PROBE_WINDOWS;
+                const uint32_t total = APP_MIC_LIVE_MUTE_MS / 100U;
+
+                g->phase = GUARD_HOLD;
+                g->left = (total > used) ? (total - used) : 1U;
+            }
+            return GUARD_EVENT_FEEDBACK;
+        }
+        return GUARD_EVENT_NONE;
+    case GUARD_HOLD:
+    default:
+        if (--g->left == 0U) {
+            g->phase = GUARD_ARMED;
+            g->trigger_in = 0;
+            return GUARD_EVENT_RELEASED;
+        }
+        return GUARD_EVENT_NONE;
+    }
+}
+
+/*
  * Continuous monitor with live playback (see mic_app.h). Reads the microphone in 8 ms chunks,
  * measures every sample, removes the DC offset, multiplies by APP_MIC_LIVE_GAIN and writes the
  * result to the speaker. Prints one line per second. Returns RESULT_OK when it ended by itself.
@@ -512,15 +631,14 @@ static test_result_t run_live_monitor(speaker_t *spk, inmp441_t *mic, bool speak
 {
     const bool forever = (APP_MIC_LIVE_MS == APP_MIC_LIVE_FOREVER);
     const uint32_t total = forever ? 0U : ((RATE_HZ / 1000U) * APP_MIC_LIVE_MS);
-    const uint32_t mute_samples = (RATE_HZ / 1000U) * APP_MIC_LIVE_MUTE_MS;
     const bool want_play = (APP_MIC_LIVE_PLAY != 0) && speaker_free && (spk != NULL);
     live_acc_t acc;
     uint32_t done = 0U;
     uint32_t win_n = 0U;
     uint32_t windows = 0U;
-    uint32_t mute_left = 0U;
-    unsigned howl = 0U;
-    int32_t win_peak = 0;
+    howl_guard_t guard;
+    int32_t win_in_peak = 0;
+    int32_t win_out_peak = 0;
 #if !APP_MIC_PLAY_HPF
     int32_t dc_q8 = 0;
 #endif
@@ -534,6 +652,7 @@ static test_result_t run_live_monitor(speaker_t *spk, inmp441_t *mic, bool speak
         return RESULT_FAILED;
     }
     memset(&acc, 0, sizeof(acc));
+    guard_reset(&guard);
     printf("[mic] live monitor%s, one line per second. Make a sound: silence, hum mmm (LOW), say aaa (MID), "
            "hiss sss (HIGH), clap (all three)\n", forever ? " (never ends)" : "");
     if (want_play) {
@@ -598,13 +717,13 @@ static test_result_t run_live_monitor(speaker_t *spk, inmp441_t *mic, bool speak
         for (i = 0U; i < got; i++) {
             int32_t v = s_chunk[i];
             int32_t a = (v < 0) ? -v : v;
+            int32_t f;
+            int32_t fa;
             int32_t out;
+            int32_t oa;
 
             if (a > acc.peak) {
                 acc.peak = a;
-            }
-            if (a > win_peak) {
-                win_peak = a;
             }
             acc.sum += v;
             acc.sq += (uint64_t)((int64_t)v * v);
@@ -612,12 +731,21 @@ static test_result_t run_live_monitor(speaker_t *spk, inmp441_t *mic, bool speak
 
 #if APP_MIC_PLAY_HPF
             /* Output: 100 Hz high-pass (it also removes DC), then the gain, with saturation. */
-            out = (int32_t)play_hpf_step(s_chunk[i]) * (int32_t)APP_MIC_LIVE_GAIN;
+            f = (int32_t)play_hpf_step(s_chunk[i]);
 #else
             /* Output: remove the slow DC estimate, then the gain, with saturation. */
             dc_q8 += ((v * 256) - dc_q8) / 256;
-            out = (v - (dc_q8 / 256)) * (int32_t)APP_MIC_LIVE_GAIN;
+            f = v - (dc_q8 / 256);
 #endif
+            out = f * (int32_t)APP_MIC_LIVE_GAIN;
+            fa = (f < 0) ? -f : f;
+            oa = (out < 0) ? -out : out;
+            if (fa > win_in_peak) {
+                win_in_peak = fa;
+            }
+            if (oa > win_out_peak) {
+                win_out_peak = oa;
+            }
             if (out > 32767) {
                 out = 32767;
             } else if (out < -32768) {
@@ -627,38 +755,50 @@ static test_result_t run_live_monitor(speaker_t *spk, inmp441_t *mic, bool speak
         }
         acc.n += (uint32_t)got;
 
-        if (playing && (mute_left == 0U) && (got > 0U)) {
+        if (playing && !guard_muted(&guard) && (got > 0U)) {
             size_t written = 0U;
 
             sret = speaker_write(spk, s_chunk, got, &written, WRITE_TIMEOUT_MS);
             if (sret != SPEAKER_OK) {
                 printf("[mic] speaker_write failed: %d, the monitor prints only from now on\n", sret);
             }
-        } else if (mute_left > 0U) {
-            mute_left = (mute_left > (uint32_t)got) ? (mute_left - (uint32_t)got) : 0U;
         }
         done += (uint32_t)got;
         win_n += (uint32_t)got;
 
         if (win_n >= LIVE_WINDOW) {
-            /* Howl guard: the speaker is close to the microphone, so a loud level for 300 ms in a row
-               is taken as feedback. The speaker is then silent for APP_MIC_LIVE_MUTE_MS. */
-            if (playing && (mute_left == 0U) && (win_peak >= (int32_t)APP_MIC_LIVE_HOWL_PEAK)) {
-                howl++;
-                if (howl >= HOWL_WINDOWS) {
-                    mute_left = mute_samples;
-                    howl = 0U;
-                    printf("[mic] howl guard: loud input for %u ms in a row, speaker muted for %u ms\n",
-                           (unsigned)(HOWL_WINDOWS * 100U), (unsigned)APP_MIC_LIVE_MUTE_MS);
+            if (playing) {
+                const guard_event_t ev = guard_window(&guard, win_in_peak, win_out_peak);
+
+                if (ev == GUARD_EVENT_TRIPPED) {
+                    printf("[mic] howl guard: output loud for %u ms in a row, speaker muted to test it\n",
+                           (unsigned)(HOWL_WINDOWS * 100U));
+                } else if (ev == GUARD_EVENT_VOICE) {
+                    printf("[mic] howl guard: input stays loud with the speaker muted (peak %d of %d), "
+                           "so it is a voice, speaker back on\n", (int)guard.probe_in, (int)guard.trigger_in);
+                } else if (ev == GUARD_EVENT_FEEDBACK) {
+                    printf("[mic] howl guard: input fell to peak %d of %d with the speaker muted, so it was "
+                           "feedback, speaker stays muted for %u ms in total\n",
+                           (int)guard.probe_in, (int)guard.trigger_in, (unsigned)APP_MIC_LIVE_MUTE_MS);
+                } else if (ev == GUARD_EVENT_RELEASED) {
+                    printf("[mic] howl guard: mute time over, speaker back on\n");
                 }
-            } else {
-                howl = 0U;
+                if ((ev == GUARD_EVENT_VOICE) || (ev == GUARD_EVENT_RELEASED)) {
+#if APP_MIC_LIVE_PREROLL_MS > 0U
+                    /* The speaker buffers ran empty while it was muted: build the lead again. */
+                    sret = write_silence(spk, APP_MIC_LIVE_PREROLL_MS);
+                    if (sret != SPEAKER_OK) {
+                        printf("[mic] speaker pre-roll failed: %d, the monitor prints only\n", sret);
+                    }
+#endif
+                }
             }
             win_n = 0U;
-            win_peak = 0;
+            win_in_peak = 0;
+            win_out_peak = 0;
             windows++;
             if (windows >= LIVE_REPORT_WINDOWS) {
-                live_print(&acc, playing, mute_left > 0U);
+                live_print(&acc, playing, guard_muted(&guard));
                 memset(&acc, 0, sizeof(acc));
                 windows = 0U;
             }

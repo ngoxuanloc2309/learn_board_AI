@@ -65,11 +65,11 @@
 #endif
 /* Speaker volume in percent while the live playback runs. Start low: the speaker is near the microphone. */
 #ifndef APP_MIC_LIVE_VOLUME
-#define APP_MIC_LIVE_VOLUME 10U
+#define APP_MIC_LIVE_VOLUME 30U
 #endif
 /* Whole number gain applied to the microphone samples before playback (saturates at full scale). */
 #ifndef APP_MIC_LIVE_GAIN
-#define APP_MIC_LIVE_GAIN 1
+#define APP_MIC_LIVE_GAIN 3
 #endif
 /* Howl guard: if the microphone peak stays at or above this for 300 ms, the speaker is muted for the time below. */
 #ifndef APP_MIC_LIVE_HOWL_PEAK
