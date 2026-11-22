@@ -1236,7 +1236,7 @@ static test_result_t run_record_play(speaker_t *spk, inmp441_t *mic)
  * start and stop as run_record_play. The microphone and the speaker never run together. Runs until an
  * error, so it returns only RESULT_FAILED or RESULT_SKIPPED.
  */
-static test_result_t run_live_segments(speaker_t *spk, inmp441_t *mic)
+MIC_MAYBE_UNUSED static test_result_t run_live_segments(speaker_t *spk, inmp441_t *mic)
 {
     const size_t total = ((size_t)RATE_HZ / 1000U) * APP_MIC_SEG_MS;
     block_stats_t st;
@@ -1735,6 +1735,488 @@ static test_result_t run_coupling(speaker_t *spk, inmp441_t *mic)
 }
 #endif
 
+#if APP_MIC_LIVE_AEC && APP_MIC_PLAY_HPF
+/*
+ * The build of this project uses -Og (CONFIG_COMPILER_OPTIMIZATION_DEBUG) at 160 MHz, which made the
+ * first version of the filter about 20 to 30 cycles per multiply-add, too slow for 8 ms per chunk. The
+ * three inner loops are therefore separate functions built with -O2 and unrolled by four. The
+ * filter is also short (8 ms) and its weights are updated on every second chunk only.
+ *
+ * Live monitor with an echo canceller (APP_MIC_LIVE_AEC, see mic_app.h). The microphone and the
+ * speaker run all the time and nothing is restarted. The measured coupling (speaker to microphone) is
+ * linear and has a delay, so the echo of the output is estimated with an adaptive FIR filter fed by
+ * the samples that were written to the speaker, and subtracted from the microphone signal.
+ *
+ * Stages: 0 plays calibration noise, 1 waits for the microphone to catch the end of its echo,
+ * 2 correlates noise and microphone (a few lags per pass so that the loop never stalls for long),
+ * 3 runs the canceller on the live signal. The correlation gives the delay of the echo and the first
+ * weights of the filter. Every pass reads 128 samples and writes 128 samples.
+ */
+#define AEC_CHUNK         LIVE_CHUNK              /* samples per loop pass, 8 ms */
+#define AEC_TAPS          128U                    /* filter length, 8 ms, a multiple of 4 */
+#define AEC_MARGIN        16U                     /* taps placed before the strongest echo */
+#define AEC_RING          4096U                   /* power of two, holds the recent output */
+#define AEC_LAG_MAX       2048U                   /* longest delay searched, 128 ms */
+#define AEC_CAL_PLAY      2560U                   /* samples of calibration noise, 20 chunks, a multiple of 4 */
+#define AEC_CAL_MIC       (AEC_CAL_PLAY + AEC_LAG_MAX)
+#define AEC_LAGS_PER_PASS 4U
+#define AEC_SETTLE_MS     1500U
+#define AEC_BAD_LIMIT     3U                      /* windows of 1 s in a row with a bad residual */
+#define AEC_WINDOW_CHUNKS (RATE_HZ / AEC_CHUNK)   /* 1 s */
+#define AEC_REG_POWER     50.0f                   /* regularisation, power per sample, rms about 7 */
+
+#if ((AEC_CAL_PLAY % AEC_CHUNK) != 0U) || ((AEC_LAG_MAX % AEC_CHUNK) != 0U) || ((AEC_TAPS % 4U) != 0U)
+#error "AEC_CAL_PLAY and AEC_LAG_MAX must be multiples of AEC_CHUNK"
+#endif
+#if ((AEC_LAG_MAX + AEC_CHUNK) > AEC_RING)
+#error "AEC_RING is too small for AEC_LAG_MAX"
+#endif
+
+static int16_t s_cal_mic[AEC_CAL_MIC];
+static int16_t s_cal_ref[AEC_CAL_PLAY];
+static float   s_cal_corr[AEC_LAG_MAX];
+static int16_t s_ref_ring[AEC_RING];              /* output after the volume, indexed by sample count */
+static float   s_aec_w[AEC_TAPS];
+static float   s_aec_xl[AEC_TAPS + AEC_CHUNK];
+static float   s_aec_d[AEC_CHUNK];
+static int16_t s_aec_out[AEC_CHUNK];
+
+typedef struct aec_state {
+    uint32_t lag_peak;     /* delay in samples from an output sample to its echo in the microphone */
+    uint32_t lag0;         /* delay of the first tap, at least AEC_CHUNK */
+    float    ref_energy;   /* energy of the calibration noise, the scale of the correlation */
+    bool     ok;           /* calibration found the echo */
+    uint32_t window_pct;   /* percent of the echo energy near the peak that the filter span holds */
+} aec_state_t;
+
+#define AEC_HOT __attribute__((optimize("O2")))
+
+/* Dot product of n floats, n is a multiple of 4. */
+static AEC_HOT float aec_dot(const float *a, const float *b, uint32_t n)
+{
+    float s0 = 0.0f;
+    float s1 = 0.0f;
+    float s2 = 0.0f;
+    float s3 = 0.0f;
+    uint32_t i;
+
+    for (i = 0U; i < n; i += 4U) {
+        s0 += a[i] * b[i];
+        s1 += a[i + 1U] * b[i + 1U];
+        s2 += a[i + 2U] * b[i + 2U];
+        s3 += a[i + 3U] * b[i + 3U];
+    }
+    return (s0 + s1) + (s2 + s3);
+}
+
+/* a[i] += k * b[i] for n floats, n is a multiple of 4. */
+static AEC_HOT void aec_axpy(float *a, const float *b, float k, uint32_t n)
+{
+    uint32_t i;
+
+    for (i = 0U; i < n; i += 4U) {
+        a[i] += k * b[i];
+        a[i + 1U] += k * b[i + 1U];
+        a[i + 2U] += k * b[i + 2U];
+        a[i + 3U] += k * b[i + 3U];
+    }
+}
+
+/* Correlation of two int16 blocks, n is a multiple of 4. */
+static AEC_HOT float aec_corr(const int16_t *m, const int16_t *r, uint32_t n)
+{
+    float s0 = 0.0f;
+    float s1 = 0.0f;
+    float s2 = 0.0f;
+    float s3 = 0.0f;
+    uint32_t i;
+
+    for (i = 0U; i < n; i += 4U) {
+        s0 += (float)m[i] * (float)r[i];
+        s1 += (float)m[i + 1U] * (float)r[i + 1U];
+        s2 += (float)m[i + 2U] * (float)r[i + 2U];
+        s3 += (float)m[i + 3U] * (float)r[i + 3U];
+    }
+    return (s0 + s1) + (s2 + s3);
+}
+
+static uint32_t aec_rng(uint32_t *s)
+{
+    uint32_t x = *s;
+
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    *s = x;
+    return x;
+}
+
+static int16_t aec_clip16(float v)
+{
+    if (v > 32767.0f) {
+        return 32767;
+    }
+    if (v < -32768.0f) {
+        return -32768;
+    }
+    return (int16_t)v;
+}
+
+/* Starts the filter from the correlation of the calibration, which is the echo path for a white noise. */
+static void aec_load_weights(const aec_state_t *st)
+{
+    uint32_t q;
+
+    for (q = 0U; q < AEC_TAPS; q++) {
+        s_aec_w[q] = s_cal_corr[st->lag0 + ((AEC_TAPS - 1U) - q)] / st->ref_energy;
+    }
+}
+
+/*
+ * Looks at the finished correlation. Sets lag_peak, lag0 and ok. The echo is accepted when its peak
+ * is at least 8 times the mean absolute value over all lags. Returns that ratio (rounded down).
+ */
+static uint32_t aec_find_echo(aec_state_t *st)
+{
+    float peak = 0.0f;
+    float sum = 0.0f;
+    uint32_t best = 0U;
+    uint32_t lag;
+
+    st->ok = false;
+    for (lag = 0U; lag < AEC_LAG_MAX; lag++) {
+        const float a = (s_cal_corr[lag] < 0.0f) ? -s_cal_corr[lag] : s_cal_corr[lag];
+
+        sum += a;
+        if ((lag >= AEC_CHUNK) && (a > peak)) {
+            peak = a;
+            best = lag;
+        }
+    }
+    st->lag_peak = best;
+    st->lag0 = (best > (AEC_CHUNK + AEC_MARGIN)) ? (best - AEC_MARGIN) : AEC_CHUNK;
+    if ((st->lag0 + AEC_TAPS) > AEC_LAG_MAX) {
+        st->lag0 = AEC_LAG_MAX - AEC_TAPS;
+    }
+    if ((st->ref_energy > 1.0f) && (peak > (8.0f * (sum / (float)AEC_LAG_MAX)))) {
+        float in_win = 0.0f;
+        float near_peak = 0.0f;
+        const uint32_t lo = (best > 64U) ? (best - 64U) : 0U;
+        const uint32_t hi = ((best + 512U) < AEC_LAG_MAX) ? (best + 512U) : AEC_LAG_MAX;
+
+        st->ok = true;
+        aec_load_weights(st);
+        for (lag = lo; lag < hi; lag++) {
+            const float e = s_cal_corr[lag] * s_cal_corr[lag];
+
+            near_peak += e;
+            if ((lag >= st->lag0) && (lag < (st->lag0 + AEC_TAPS))) {
+                in_win += e;
+            }
+        }
+        st->window_pct = (near_peak > 0.0f) ? (uint32_t)((100.0f * in_win) / near_peak) : 0U;
+    }
+    return (sum > 0.0f) ? (uint32_t)((peak * (float)AEC_LAG_MAX) / sum) : 0U;
+}
+
+/*
+ * One block of the NLMS canceller over s_aec_d (AEC_CHUNK samples of the microphone after the
+ * high-pass), using the output history before sample n0. The block is filtered with fixed weights,
+ * s_aec_d becomes the residual, then the weights are updated once from the whole block. The update is
+ * skipped when allow_adapt is false or when the microphone chunk is much louder than the loudest
+ * reference sample in the filter span (a near-end voice, which would pull the weights away from
+ * the echo path). Returns true when the update was skipped because of a near-end voice.
+ */
+static bool aec_nlms_block(const aec_state_t *st, uint32_t n0, float mu, bool allow_adapt)
+{
+    const int32_t base = (int32_t)n0 - (int32_t)st->lag0 - (int32_t)(AEC_TAPS - 1U);
+    float etot = 0.0f;
+    float maxx = 0.0f;
+    float maxd = 0.0f;
+    bool near_end;
+    uint32_t m;
+    uint32_t i;
+
+    for (m = 0U; m < (AEC_TAPS + AEC_CHUNK); m++) {
+        const int32_t u = base + (int32_t)m;
+        float v = 0.0f;
+
+        if ((u >= 0) && (u < (int32_t)n0)) {
+            v = (float)s_ref_ring[(uint32_t)u & (AEC_RING - 1U)];
+        }
+        s_aec_xl[m] = v;
+        etot += v * v;
+        if (((v < 0.0f) ? -v : v) > maxx) {
+            maxx = (v < 0.0f) ? -v : v;
+        }
+    }
+    for (i = 0U; i < AEC_CHUNK; i++) {
+        const float a = (s_aec_d[i] < 0.0f) ? -s_aec_d[i] : s_aec_d[i];
+
+        if (a > maxd) {
+            maxd = a;
+        }
+    }
+    near_end = (maxd > ((0.8f * maxx) + 200.0f));
+
+    for (i = 0U; i < AEC_CHUNK; i++) {
+        s_aec_d[i] -= aec_dot(s_aec_w, &s_aec_xl[i], AEC_TAPS);
+    }
+    if (allow_adapt && !near_end) {
+        /* Energy of one filter window, estimated from the whole span. */
+        const float e1 = etot * ((float)AEC_TAPS / (float)(AEC_TAPS + AEC_CHUNK));
+        const float k = mu / (((float)AEC_CHUNK * e1) + ((float)AEC_CHUNK * (float)AEC_TAPS * AEC_REG_POWER));
+
+        for (i = 0U; i < AEC_CHUNK; i++) {
+            aec_axpy(s_aec_w, &s_aec_xl[i], k * s_aec_d[i], AEC_TAPS);
+        }
+    }
+    return near_end;
+}
+
+/* Runs until an error, so it returns only RESULT_FAILED or RESULT_SKIPPED. */
+static test_result_t run_live_aec(speaker_t *spk, inmp441_t *mic)
+{
+    const float mu = (float)APP_MIC_AEC_MU_PERCENT / 100.0f;
+    const int32_t vol = (int32_t)APP_MIC_LIVE_VOLUME;
+    aec_state_t st;
+    uint32_t rng = 2463534242U;
+    uint32_t n = 0U;
+    uint32_t stage = 0U;
+    uint32_t lag_done = 0U;
+    uint32_t bad = 0U;
+    uint32_t howl = 0U;
+    uint32_t mute_left = 0U;
+    uint32_t win_chunks = 0U;
+    uint32_t win_frozen = 0U;
+    uint32_t win_count = 0U;
+    uint32_t win_slow = 0U;
+    uint32_t max_ms = 0U;
+    float g_cur = (float)APP_MIC_AEC_GAIN;
+    uint64_t sum_d = 0U;
+    uint64_t sum_e = 0U;
+    uint64_t sum_o = 0U;
+    bool first = true;
+    int ret;
+    int sret;
+    uint32_t i;
+
+    if ((spk == NULL) || (mic == NULL)) {
+        printf("[mic] live aec skipped: the speaker or the microphone is not available\n");
+        return RESULT_SKIPPED;
+    }
+    memset(&st, 0, sizeof(st));
+    memset(s_ref_ring, 0, sizeof(s_ref_ring));
+    memset(s_aec_w, 0, sizeof(s_aec_w));
+    printf("[mic] live aec: calibration noise for about 5 s, then live. Stay quiet, speaker at volume %u percent, "
+           "gain x%d\n", (unsigned)APP_MIC_LIVE_VOLUME, (int)APP_MIC_AEC_GAIN);
+
+    sret = speaker_set_volume(spk, (uint8_t)APP_MIC_LIVE_VOLUME);
+    if (sret == SPEAKER_OK) {
+        sret = speaker_start(spk);
+    }
+    if (sret != SPEAKER_OK) {
+        printf("[mic] live aec: speaker start failed: %d\n", sret);
+        return RESULT_FAILED;
+    }
+    ret = inmp441_start(mic);
+    if (ret == INMP441_OK) {
+        uint32_t left = (RATE_HZ / 1000U) * AEC_SETTLE_MS;
+
+        while ((ret == INMP441_OK) && (left > 0U)) {
+            size_t got = 0U;
+
+            ret = inmp441_read(mic, s_chunk, AEC_CHUNK, &got, READ_TIMEOUT_MS);
+            left = (left > (uint32_t)got) ? (left - (uint32_t)got) : 0U;
+        }
+    }
+    if ((ret == INMP441_OK) && (write_silence(spk, APP_MIC_LIVE_PREROLL_MS) != SPEAKER_OK)) {
+        ret = INMP441_ERR_BUS;
+    }
+
+    while (ret == INMP441_OK) {
+        size_t got = 0U;
+        size_t written = 0U;
+        uint32_t t0 = 0U;
+        uint32_t t1 = 0U;
+        const bool use_aec = (stage == 3U) && st.ok;
+
+        ret = inmp441_read(mic, s_chunk, AEC_CHUNK, &got, READ_TIMEOUT_MS);
+        if ((ret != INMP441_OK) || (got != AEC_CHUNK)) {
+            ret = (ret != INMP441_OK) ? ret : INMP441_ERR_BUS;
+            break;
+        }
+        sx_get_time_ms(&t0);
+        if (first) {
+            play_hpf_reset(s_chunk[0]);
+            first = false;
+        }
+        for (i = 0U; i < AEC_CHUNK; i++) {
+            s_aec_d[i] = (float)play_hpf_step(s_chunk[i]);
+        }
+
+        if (stage <= 1U) {
+            for (i = 0U; i < AEC_CHUNK; i++) {
+                if ((n + i) < AEC_CAL_MIC) {
+                    s_cal_mic[n + i] = aec_clip16(s_aec_d[i]);
+                }
+                s_aec_out[i] = (stage == 0U)
+                    ? (int16_t)(((int32_t)(aec_rng(&rng) % ((2U * (uint32_t)APP_MIC_AEC_CAL_AMP) + 1U)))
+                                - (int32_t)APP_MIC_AEC_CAL_AMP)
+                    : (int16_t)0;
+                if ((n + i) < AEC_CAL_PLAY) {
+                    s_cal_ref[n + i] = (int16_t)(((int32_t)s_aec_out[i] * vol) / (int32_t)SPEAKER_VOLUME_MAX);
+                }
+            }
+        } else if (stage == 2U) {
+            uint32_t lag;
+            const uint32_t end = ((lag_done + AEC_LAGS_PER_PASS) < AEC_LAG_MAX)
+                                     ? (lag_done + AEC_LAGS_PER_PASS) : AEC_LAG_MAX;
+
+            for (lag = lag_done; lag < end; lag++) {
+                s_cal_corr[lag] = aec_corr(&s_cal_mic[lag], s_cal_ref, AEC_CAL_PLAY);
+            }
+            lag_done = end;
+            memset(s_aec_out, 0, sizeof(s_aec_out));
+        } else {
+            const bool muted = (mute_left > 0U);
+            uint64_t chunk_o = 0U;
+
+            for (i = 0U; i < AEC_CHUNK; i++) {
+                sum_d += (uint64_t)(s_aec_d[i] * s_aec_d[i]);
+            }
+            if (use_aec) {
+                if (aec_nlms_block(&st, n, mu, (!muted) && ((win_chunks & 1U) != 0U))) {
+                    win_frozen++;
+                }
+            }
+            {
+                /* Gain limiter: a loud voice is not amplified into clipping. The gain falls at once and
+                   rises slowly (about 0.4 s). */
+                const float g_set = use_aec ? (float)APP_MIC_AEC_GAIN : (float)APP_MIC_LIVE_GAIN;
+                float pk = 0.0f;
+                float g_want;
+
+                for (i = 0U; i < AEC_CHUNK; i++) {
+                    const float a = (s_aec_d[i] < 0.0f) ? -s_aec_d[i] : s_aec_d[i];
+
+                    if (a > pk) {
+                        pk = a;
+                    }
+                }
+                g_want = ((pk * g_set) > (float)APP_MIC_AEC_TARGET) ? ((float)APP_MIC_AEC_TARGET / pk) : g_set;
+                g_cur = (g_want < g_cur) ? g_want : (g_cur + ((g_want - g_cur) * 0.02f));
+            }
+            for (i = 0U; i < AEC_CHUNK; i++) {
+                s_aec_out[i] = muted ? (int16_t)0 : aec_clip16(s_aec_d[i] * g_cur);
+                sum_e += (uint64_t)(s_aec_d[i] * s_aec_d[i]);
+                chunk_o += (uint64_t)((int64_t)s_aec_out[i] * (int64_t)s_aec_out[i]);
+            }
+            sum_o += chunk_o;
+            if (muted) {
+                mute_left--;
+            } else if (isqrt64(chunk_o / AEC_CHUNK) >= (uint32_t)APP_MIC_AEC_HOWL_RMS) {
+                howl++;
+                if (howl >= 100U) {          /* about 0.8 s in a row, speech does not hold this level */
+                    mute_left = (1500U * (RATE_HZ / 1000U)) / AEC_CHUNK;
+                    howl = 0U;
+                    if (st.ok) {
+                        aec_load_weights(&st);
+                    }
+                }
+            } else {
+                howl = 0U;
+            }
+        }
+
+        for (i = 0U; i < AEC_CHUNK; i++) {
+            s_ref_ring[(n + i) & (AEC_RING - 1U)] =
+                (int16_t)(((int32_t)s_aec_out[i] * vol) / (int32_t)SPEAKER_VOLUME_MAX);
+        }
+        sx_get_time_ms(&t1);
+        if ((t1 - t0) > max_ms) {
+            max_ms = t1 - t0;
+        }
+        if ((t1 - t0) > 6U) {
+            win_slow++;
+        }
+
+        sret = speaker_write(spk, s_aec_out, AEC_CHUNK, &written, WRITE_TIMEOUT_MS);
+        if (sret != SPEAKER_OK) {
+            printf("[mic] live aec: speaker_write failed: %d\n", sret);
+            ret = INMP441_ERR_BUS;
+            break;
+        }
+        n += AEC_CHUNK;
+
+        if ((stage == 0U) && (n >= AEC_CAL_PLAY)) {
+            stage = 1U;
+        } else if ((stage == 1U) && (n >= AEC_CAL_MIC)) {
+            uint64_t en = 0U;
+            uint32_t k;
+
+            for (k = 0U; k < AEC_CAL_PLAY; k++) {
+                en += (uint64_t)((int64_t)s_cal_ref[k] * (int64_t)s_cal_ref[k]);
+            }
+            st.ref_energy = (float)en;
+            stage = 2U;
+        } else if ((stage == 2U) && (lag_done >= AEC_LAG_MAX)) {
+            const uint32_t ratio = aec_find_echo(&st);
+
+            if (st.ok) {
+                printf("[mic] live aec: echo at %u samples (%u ms), peak is %ux the mean, taps from %u, "
+                       "the filter span holds %u percent of the echo energy near the peak. "
+                       "Longest calibration pass %u ms of 8. Live now\n",
+                       (unsigned)st.lag_peak, (unsigned)(st.lag_peak / (RATE_HZ / 1000U)), (unsigned)ratio,
+                       (unsigned)st.lag0, (unsigned)st.window_pct, (unsigned)max_ms);
+            } else {
+                printf("[mic] live aec: no echo found (peak %ux the mean), is the speaker connected? "
+                       "Live runs without the canceller at gain x%d\n", (unsigned)ratio, (int)APP_MIC_LIVE_GAIN);
+            }
+            stage = 3U;
+            max_ms = 0U;
+        } else if (stage == 3U) {
+            win_chunks++;
+            if (win_chunks >= AEC_WINDOW_CHUNKS) {
+                const uint32_t span = win_chunks * AEC_CHUNK;
+
+                if (use_aec) {
+                    bad = (sum_e > ((4U * sum_d) + (100000ULL * span))) ? (bad + 1U) : 0U;
+                }
+                win_count++;
+#if APP_MIC_AEC_LOG_S > 0
+                if (win_count >= (uint32_t)APP_MIC_AEC_LOG_S) {
+                    printf("[mic] aec: mic %u residual %u out %u (rms), gain x%u, frozen %u of %u blocks, "
+                           "longest pass %u ms of 8, slow passes %u\n",
+                           (unsigned)isqrt64(sum_d / span), (unsigned)isqrt64(sum_e / span),
+                           (unsigned)isqrt64(sum_o / span), (unsigned)g_cur, (unsigned)win_frozen,
+                           (unsigned)win_chunks, (unsigned)max_ms, (unsigned)win_slow);
+                    win_count = 0U;
+                }
+#else
+                win_count = 0U;
+#endif
+                win_chunks = 0U;
+                win_frozen = 0U;
+                win_slow = 0U;
+                sum_d = 0U;
+                sum_e = 0U;
+                sum_o = 0U;
+                max_ms = 0U;
+                if ((bad >= AEC_BAD_LIMIT) && st.ok) {
+                    aec_load_weights(&st);
+                    bad = 0U;
+                }
+            }
+        }
+    }
+    (void)inmp441_stop(mic);
+    (void)speaker_stop(spk);
+    printf("[mic] live aec ended: mic code %d\n", ret);
+    return RESULT_FAILED;
+}
+#endif
+
 /* Prints the lowest free stack, then ends the calling task. */
 static void end_task(void)
 {
@@ -1786,7 +2268,9 @@ static void mic_task(void *arg)
     }
 #endif
     if ((r_meter == RESULT_OK) && (APP_MIC_LIVE_MS != 0U)) {
-#if APP_MIC_LIVE_SEGMENT
+#if APP_MIC_LIVE_AEC && APP_MIC_PLAY_HPF
+        r_live = speaker_free ? run_live_aec(board_get_speaker(), board_get_mic()) : RESULT_SKIPPED;
+#elif APP_MIC_LIVE_SEGMENT
         r_live = speaker_free ? run_live_segments(board_get_speaker(), board_get_mic()) : RESULT_SKIPPED;
 #else
         r_live = run_live_monitor(board_get_speaker(), board_get_mic(), speaker_free);

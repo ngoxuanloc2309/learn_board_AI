@@ -86,7 +86,7 @@
  * speaker or the air. Takes about 24 s. Chosen by design.
  */
 #ifndef APP_MIC_COUPLING
-#define APP_MIC_COUPLING 1
+#define APP_MIC_COUPLING 0
 #endif
 #ifndef APP_MIC_DIAG
 #define APP_MIC_DIAG 0
@@ -119,6 +119,41 @@
 #endif
 #ifndef APP_MIC_SEG_GATE
 #define APP_MIC_SEG_GATE 150
+#endif
+/*
+ * Echo canceller for the continuous live mode (1, default; checked before APP_MIC_LIVE_SEGMENT). The
+ * coupling probe showed that the speaker leaks into the microphone through the air or the wires near
+ * the speaker, linearly, with a ratio up to about 0.5 around 1 kHz, so loud live playback rings. The
+ * canceller plays about 5 s of calibration noise, finds the delay and the echo path by correlation,
+ * then runs an NLMS filter (128 taps, 8 ms) on the live signal. A gain limiter keeps the output peak near
+ * APP_MIC_AEC_TARGET so that a loud voice does not clip. Needs APP_MIC_PLAY_HPF 1. The room
+ * must be quiet during the calibration. Set 0 to get the segment mode or the old live monitor.
+ * APP_MIC_AEC_GAIN is the software gain after cancelling (the live volume is APP_MIC_LIVE_VOLUME);
+ * if it still rings, lower it. APP_MIC_AEC_MU_PERCENT is the NLMS step (percent, applied on every second chunk). APP_MIC_AEC_CAL_AMP is
+ * the amplitude of the calibration noise before the volume. APP_MIC_AEC_HOWL_RMS mutes the output for
+ * 1.5 s when the output rms stays above it for about 0.8 s (feedback; speech does not hold a level). APP_MIC_AEC_LOG_S is the seconds between report lines
+ * (0 means no report). All values are chosen by design, not measured.
+ */
+#ifndef APP_MIC_LIVE_AEC
+#define APP_MIC_LIVE_AEC 1
+#endif
+#ifndef APP_MIC_AEC_GAIN
+#define APP_MIC_AEC_GAIN 6
+#endif
+#ifndef APP_MIC_AEC_MU_PERCENT
+#define APP_MIC_AEC_MU_PERCENT 30
+#endif
+#ifndef APP_MIC_AEC_CAL_AMP
+#define APP_MIC_AEC_CAL_AMP 6000
+#endif
+#ifndef APP_MIC_AEC_HOWL_RMS
+#define APP_MIC_AEC_HOWL_RMS 6000
+#endif
+#ifndef APP_MIC_AEC_TARGET
+#define APP_MIC_AEC_TARGET 16000
+#endif
+#ifndef APP_MIC_AEC_LOG_S
+#define APP_MIC_AEC_LOG_S 2
 #endif
 /*
  * Quiet live monitor: 1 means the live loop prints nothing, measures nothing and runs no band

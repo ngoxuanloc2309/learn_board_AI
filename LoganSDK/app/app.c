@@ -3,6 +3,7 @@
 #include "mic_app.h"
 #include "screen_app.h"
 #include "speaker_app.h"
+#include "storage_app.h"
 #include "wifi_app.h"
 
 void app_start(void)
@@ -17,8 +18,15 @@ void app_start(void)
      * speaker_app and mic_app are the speaker and microphone bring-up tests. Each calls board_init
      * by itself (it is safe to call twice). speaker_app plays three tones once per boot. mic_app
      * waits until that test is over, then shows a microphone level meter and plays back a
-     * recording. Remove both calls when the tests are no longer needed.
+     * recording. They are switched off while the microSD test runs, so that the log is not mixed
+     * and the speaker does not play the calibration noise of mic_app. Remove the two slashes to
+     * run them again.
      */
-    (void)speaker_app_start();
-    (void)mic_app_start();
+    // (void)speaker_app_start();
+    // (void)mic_app_start();
+    /*
+     * storage_app is the microSD bring-up test. It runs once, in its own task, and ends. Insert a
+     * FAT32 card before the power is on. It never replaces a file of the owner (see storage_app.h).
+     */
+    (void)storage_app_start();
 }
