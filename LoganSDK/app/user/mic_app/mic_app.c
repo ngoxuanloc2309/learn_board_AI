@@ -709,7 +709,7 @@ static int32_t agc_next_gain(int32_t cur_q8, int32_t peak)
  * measures every sample, removes the DC offset, multiplies by APP_MIC_LIVE_GAIN and writes the
  * result to the speaker. Prints one line per second. Returns RESULT_OK when it ended by itself.
  */
-static test_result_t run_live_monitor(speaker_t *spk, inmp441_t *mic, bool speaker_free)
+MIC_MAYBE_UNUSED static test_result_t run_live_monitor(speaker_t *spk, inmp441_t *mic, bool speaker_free)
 {
     const bool forever = (APP_MIC_LIVE_MS == APP_MIC_LIVE_FOREVER);
     const uint32_t total = forever ? 0U : ((RATE_HZ / 1000U) * APP_MIC_LIVE_MS);
@@ -1213,6 +1213,232 @@ static test_result_t run_record_play(speaker_t *spk, inmp441_t *mic)
     return RESULT_OK;
 }
 
+/*
+ * Live monitor in segments (see APP_MIC_LIVE_SEGMENT in mic_app.h). Each round is the record and play
+ * step on a short piece: the same read, the same high-pass, the same scaling and the same speaker
+ * start and stop as run_record_play. The microphone and the speaker never run together. Runs until an
+ * error, so it returns only RESULT_FAILED or RESULT_SKIPPED.
+ */
+static test_result_t run_live_segments(speaker_t *spk, inmp441_t *mic)
+{
+    const size_t total = ((size_t)RATE_HZ / 1000U) * APP_MIC_SEG_MS;
+    block_stats_t st;
+    int16_t *rec;
+    int ret = SPEAKER_OK;
+    int mret = INMP441_OK;
+
+    if ((spk == NULL) || (mic == NULL) || (total == 0U)) {
+        printf("[mic] live segments skipped: the speaker is not available\n");
+        return RESULT_SKIPPED;
+    }
+    rec = (int16_t *)malloc(total * sizeof(int16_t));
+    if (rec == NULL) {
+        printf("[mic] live segments skipped: the heap cannot hold %u bytes, lower APP_MIC_SEG_MS\n",
+               (unsigned)(total * sizeof(int16_t)));
+        return RESULT_SKIPPED;
+    }
+    printf("[mic] live in segments of %u ms (record, then play, never together), no more logs\n",
+           (unsigned)APP_MIC_SEG_MS);
+    ret = speaker_set_volume(spk, (uint8_t)APP_MIC_PLAY_VOLUME);
+
+    while ((ret == SPEAKER_OK) && (mret == INMP441_OK)) {
+        size_t got = 0U;
+        size_t written = 0U;
+        int32_t gain;
+
+        mret = inmp441_start(mic);
+        if (mret == INMP441_OK) {
+            mret = discard_settle(mic);
+        }
+        if (mret == INMP441_OK) {
+            mret = record_samples(mic, rec, total, &got);
+        }
+        (void)inmp441_stop(mic);
+        if ((mret != INMP441_OK) || (got == 0U)) {
+            break;
+        }
+
+        compute_stats(rec, got, &st);
+#if APP_MIC_PLAY_HPF
+        {
+            size_t k;
+
+            play_hpf_reset(rec[0]);
+            for (k = 0U; k < got; k++) {
+                rec[k] = play_hpf_step(rec[k]);
+            }
+            compute_stats(rec, got, &st);
+        }
+#endif
+        if (st.peak < (int32_t)APP_MIC_SEG_GATE) {
+            continue;       /* room noise only: play nothing */
+        }
+        gain = APP_MIC_PLAY_PEAK / st.peak;
+        if (gain < 1) {
+            gain = 1;
+        }
+        if (gain > APP_MIC_MAX_GAIN) {
+            gain = APP_MIC_MAX_GAIN;
+        }
+        amplify(rec, got, gain);
+
+        ret = speaker_start(spk);
+        if (ret == SPEAKER_OK) {
+            ret = speaker_write(spk, rec, got, &written, WRITE_TIMEOUT_MS);
+            if (ret == SPEAKER_OK) {
+                ret = write_silence(spk, 100U);
+            }
+            (void)speaker_stop(spk);
+        }
+    }
+    free(rec);
+    printf("[mic] live segments stopped: microphone %d, speaker %d\n", mret, ret);
+    return RESULT_FAILED;
+}
+
+#if APP_MIC_DIAG && APP_MIC_PLAY_HPF
+/* One period of 1 kHz at 16000 Hz is 16 samples: 3000 times sin(2 pi k / 16). */
+static const int16_t s_diag_tone[16] = { 0, 1148, 2121, 2772, 3000, 2772, 2121, 1148, 0, -1148, -2121, -2772, -3000, -2772, -2121, -1148 };
+static int16_t s_diag_out[LIVE_CHUNK];
+
+typedef struct diag_result {
+    int32_t  peak;      /* largest absolute sample after the 100 Hz high-pass */
+    uint32_t ac_hpf;    /* rms after the 100 Hz high-pass */
+    uint32_t ac_raw;    /* rms with only the mean removed */
+    int32_t  dc;        /* mean of the raw samples */
+} diag_result_t;
+
+/*
+ * One phase of the diagnostic. mode 0: microphone alone. mode 1: the speaker runs and is fed with
+ * zeros. mode 2: the speaker plays a quiet 1 kHz tone. Returns true when the phase ran to the end.
+ */
+static bool diag_phase(speaker_t *spk, inmp441_t *mic, unsigned mode, diag_result_t *res)
+{
+    const uint32_t total = (RATE_HZ / 1000U) * APP_MIC_DIAG_MS;
+    const bool spk_on = (mode != 0U);
+    uint32_t done = 0U;
+    int64_t sum = 0;
+    uint64_t sq = 0U;
+    uint64_t fsq = 0U;
+    int32_t fpeak = 0;
+    bool first = true;
+    bool ok = true;
+    int ret;
+    size_t i;
+
+    memset(res, 0, sizeof(*res));
+    if (spk_on) {
+        for (i = 0U; i < LIVE_CHUNK; i++) {
+            s_diag_out[i] = (mode == 2U) ? s_diag_tone[i & 15U] : (int16_t)0;
+        }
+        if ((speaker_set_volume(spk, (uint8_t)APP_MIC_LIVE_VOLUME) != SPEAKER_OK) ||
+            (speaker_start(spk) != SPEAKER_OK)) {
+            return false;
+        }
+    }
+    ret = inmp441_start(mic);
+    if (ret == INMP441_OK) {
+        ret = discard_settle(mic);
+    }
+    if ((ret == INMP441_OK) && spk_on && (write_silence(spk, APP_MIC_LIVE_PREROLL_MS) != SPEAKER_OK)) {
+        ret = INMP441_ERR_BUS;
+    }
+    while ((ret == INMP441_OK) && (done < total)) {
+        size_t got = 0U;
+
+        ret = inmp441_read(mic, s_chunk, LIVE_CHUNK, &got, READ_TIMEOUT_MS);
+        if (ret != INMP441_OK) {
+            break;
+        }
+        if (first && (got > 0U)) {
+            play_hpf_reset(s_chunk[0]);
+            first = false;
+        }
+        for (i = 0U; i < got; i++) {
+            int32_t v = s_chunk[i];
+            int32_t f = (int32_t)play_hpf_step(s_chunk[i]);
+            int32_t fa = (f < 0) ? -f : f;
+
+            sum += v;
+            sq += (uint64_t)((int64_t)v * v);
+            fsq += (uint64_t)((int64_t)f * f);
+            if (fa > fpeak) {
+                fpeak = fa;
+            }
+        }
+        done += (uint32_t)got;
+        if (spk_on && (got > 0U)) {
+            size_t written = 0U;
+
+            if (speaker_write(spk, s_diag_out, LIVE_CHUNK, &written, WRITE_TIMEOUT_MS) != SPEAKER_OK) {
+                ok = false;
+                break;
+            }
+        }
+    }
+    (void)inmp441_stop(mic);
+    if (spk_on) {
+        (void)speaker_stop(spk);
+    }
+    if ((ret != INMP441_OK) || !ok || (done == 0U)) {
+        return false;
+    }
+    {
+        const uint64_t mean_sq = (uint64_t)(sum * sum) / done;
+        const uint64_t ms = ((sq > mean_sq) ? (sq - mean_sq) : 0U) / done;
+
+        res->peak = fpeak;
+        res->ac_hpf = isqrt64(fsq / done);
+        res->ac_raw = isqrt64(ms);
+        res->dc = (int32_t)(sum / (int64_t)done);
+    }
+    return true;
+}
+
+static test_result_t run_diag(speaker_t *spk, inmp441_t *mic)
+{
+    static const char *const name[4] = { "A mic only", "B mic + speaker playing silence",
+                                         "C mic + speaker playing 1 kHz tone", "A2 mic only again" };
+    static const unsigned mode[4] = { 0U, 1U, 2U, 0U };
+    diag_result_t r[4];
+    unsigned k;
+
+    if ((spk == NULL) || (mic == NULL)) {
+        printf("[mic] diag skipped: the speaker is not available\n");
+        return RESULT_SKIPPED;
+    }
+    printf("[mic] diag starts in 3 s: KEEP THE ROOM SILENT for about %u s (do not talk, do not touch the board)\n",
+           (unsigned)((4U * (APP_MIC_DIAG_MS + 400U)) / 1000U));
+    sx_delay_ms(3000U);
+    for (k = 0U; k < 4U; k++) {
+        if (!diag_phase(spk, mic, mode[k], &r[k])) {
+            printf("[mic] diag phase %s FAILED, diagnostic stopped\n", name[k]);
+            return RESULT_FAILED;
+        }
+        printf("[mic] diag %s: peak=%d rms_hpf=%u rms_raw=%u dc=%d\n", name[k], (int)r[k].peak,
+               (unsigned)r[k].ac_hpf, (unsigned)r[k].ac_raw, (int)r[k].dc);
+        sx_delay_ms(300U);
+    }
+    {
+        const uint32_t a = (r[0].ac_hpf > r[3].ac_hpf) ? r[0].ac_hpf : r[3].ac_hpf;
+        const uint32_t ab = (a < 1U) ? 1U : a;
+
+        if (r[1].ac_hpf > (2U * ab)) {
+            printf("[mic] diag result: with the speaker running on silence the microphone noise is more than 2 times higher (%u against %u). That points to an electrical cause (speaker clock, amplifier supply or wiring), not to sound.\n",
+                   (unsigned)r[1].ac_hpf, (unsigned)ab);
+        } else {
+            printf("[mic] diag result: the speaker running on silence does not raise the microphone noise by 2 times (%u against %u). An electrical cause is less likely; sound from the speaker or the loop gain is more likely.\n",
+                   (unsigned)r[1].ac_hpf, (unsigned)ab);
+        }
+        if (r[2].ac_hpf > (2U * ((r[1].ac_hpf < 1U) ? 1U : r[1].ac_hpf))) {
+            printf("[mic] diag: the tone raises the noise further (%u against %u in B), the sound or the tone current reaches the microphone.\n",
+                   (unsigned)r[2].ac_hpf, (unsigned)r[1].ac_hpf);
+        }
+    }
+    return RESULT_OK;
+}
+#endif
+
 /* Prints the lowest free stack, then ends the calling task. */
 static void end_task(void)
 {
@@ -1253,8 +1479,17 @@ static void mic_task(void *arg)
         r_play = run_record_play(board_get_speaker(), board_get_mic());
     }
     printf("[mic] summary: level meter %s, record and play %s\n", result_text(r_meter), result_text(r_play));
+#if APP_MIC_DIAG && APP_MIC_PLAY_HPF
+    if ((r_meter == RESULT_OK) && speaker_free) {
+        printf("[mic] diagnostic %s\n", result_text(run_diag(board_get_speaker(), board_get_mic())));
+    }
+#endif
     if ((r_meter == RESULT_OK) && (APP_MIC_LIVE_MS != 0U)) {
+#if APP_MIC_LIVE_SEGMENT
+        r_live = speaker_free ? run_live_segments(board_get_speaker(), board_get_mic()) : RESULT_SKIPPED;
+#else
         r_live = run_live_monitor(board_get_speaker(), board_get_mic(), speaker_free);
+#endif
         printf("[mic] live monitor %s\n", result_text(r_live));
     }
     end_task();

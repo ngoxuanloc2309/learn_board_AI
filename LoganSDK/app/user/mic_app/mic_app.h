@@ -60,8 +60,46 @@
 #ifndef APP_MIC_LIVE_MS
 #define APP_MIC_LIVE_MS APP_MIC_LIVE_FOREVER//0U//APP_MIC_LIVE_FOREVER
 #endif
+/*
+ * Diagnostic (1 = run it once, after the record and play step and before the live monitor). It finds
+ * out why the continuous live path (microphone and speaker together) sounds harsh while the recorded
+ * playback is clean. Four phases of APP_MIC_DIAG_MS each, in this order, and it needs a SILENT room
+ * (do not talk, do not touch the board): A the microphone alone; B the microphone together with the
+ * speaker running and fed with digital silence (so the speaker clocks and the amplifier run but no
+ * sound comes out); C the microphone together with the speaker playing a quiet 1 kHz tone at
+ * APP_MIC_LIVE_VOLUME; A again, to see drift. Each phase prints one line: peak and rms after the
+ * 100 Hz high-pass, rms with only the mean removed, and the mean. Then a summary line compares B with
+ * A. The loop of B and C reads and writes in 8 ms chunks like the old live loop, with no print inside.
+ * Set 0 when it is no longer needed. Chosen by design.
+ */
+#ifndef APP_MIC_DIAG
+#define APP_MIC_DIAG 1
+#endif
+#ifndef APP_MIC_DIAG_MS
+#define APP_MIC_DIAG_MS 3000U
+#endif
 #ifndef APP_MIC_LIVE_PLAY
 #define APP_MIC_LIVE_PLAY 1
+#endif
+/*
+ * Segment mode (default, 1): the live monitor does not run the microphone and the speaker together.
+ * It repeats exactly what the recorded playback does, on short pieces: record APP_MIC_SEG_MS with the
+ * speaker off, stop the microphone, play the piece (100 Hz high-pass and the same automatic scaling
+ * as the recorded playback, at APP_MIC_PLAY_VOLUME) with the microphone off, and start again. There
+ * is no acoustic loop, so no howl, and the sound path is the one that was heard to be clean. The cost:
+ * the sound is delayed by about APP_MIC_SEG_MS plus the start-up time of the microphone, and what is
+ * said while a piece is playing is not recorded. A piece whose peak (after the high-pass) is below
+ * APP_MIC_SEG_GATE is room noise and is not played, so there is no hiss between sentences. Set 0 to
+ * get the old continuous live path (microphone and speaker together). Chosen by design, not measured.
+ */
+#ifndef APP_MIC_LIVE_SEGMENT
+#define APP_MIC_LIVE_SEGMENT 1
+#endif
+#ifndef APP_MIC_SEG_MS
+#define APP_MIC_SEG_MS 1500U
+#endif
+#ifndef APP_MIC_SEG_GATE
+#define APP_MIC_SEG_GATE 150
 #endif
 /*
  * Quiet live monitor: 1 means the live loop prints nothing, measures nothing and runs no band
