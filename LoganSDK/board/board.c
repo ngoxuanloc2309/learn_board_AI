@@ -29,6 +29,19 @@ static bool s_speaker_ready;
 static bool s_mic_ready;
 static bool s_storage_ready;
 
+/*
+ * Set by the display driver when a screen_hmi_draw_bitmap() transfer has finished. The callback runs
+ * in interrupt context, so it only writes this flag. Users wait for it with board_screen_flush_is_done().
+ */
+static volatile bool s_screen_flush_done;
+
+static bool board_on_screen_flush_done(void *user_ctx)
+{
+    (void)user_ctx;
+    s_screen_flush_done = true;
+    return false;   /* no task was woken */
+}
+
 /* LCD bus. Entries of data_pins after bus_width are not read by the platform. */
 static const sx_i80_config_t s_lcd_bus = {
     .dc_pin             = BOARD_PIN_LCD_RS,
@@ -77,7 +90,7 @@ static const screen_hmi_config_t s_screen_config = {
     .init_cmds            = NULL,
     .init_cmd_count       = 0U,
     .delay_ms             = sx_delay_ms,
-    .on_flush_done        = NULL,
+    .on_flush_done        = board_on_screen_flush_done,
     .user_ctx             = NULL
 };
 
@@ -223,6 +236,16 @@ int board_init_storage(void)
         s_storage_ready = true;
     }
     return ret;
+}
+
+void board_screen_flush_clear(void)
+{
+    s_screen_flush_done = false;
+}
+
+bool board_screen_flush_is_done(void)
+{
+    return s_screen_flush_done;
 }
 
 screen_hmi_t *board_get_screen(void)

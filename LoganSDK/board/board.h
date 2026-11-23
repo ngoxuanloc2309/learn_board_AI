@@ -179,6 +179,15 @@ touch_t *board_get_touch(void);
 speaker_t *board_get_speaker(void);
 inmp441_t *board_get_mic(void);
 
+/*
+ * Completion flag of screen_hmi_draw_bitmap, which transfers in the background. Call
+ * board_screen_flush_clear() right before the draw, then wait until board_screen_flush_is_done()
+ * returns true. The flag is set from interrupt context. It is not set by screen_hmi_fill_rect,
+ * which waits for itself. Valid for one draw at a time.
+ */
+void board_screen_flush_clear(void);
+bool board_screen_flush_is_done(void);
+
 #ifdef __cplusplus
 }
 #endif
