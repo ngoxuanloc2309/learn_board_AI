@@ -43,7 +43,7 @@ typedef ai_backend_event_t ai_net_event_t;
 typedef struct {
     uint32_t frames_offered;     /* frames given by AI_app, all turns */
     uint32_t frames_dropped;     /* of them not put into the buffer (buffer full) */
-    uint32_t buffer_min_free;    /* lowest free space of the buffer seen, in bytes (the buffer size at the start) */
+    uint32_t buffer_min_free;    /* lowest free space of the buffer seen in the current turn, in bytes (reset by ai_net_turn_begin) */
     uint32_t events_lost;        /* events dropped because the event queue was full */
 } ai_net_stats_t;
 

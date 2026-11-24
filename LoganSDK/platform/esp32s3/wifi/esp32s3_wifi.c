@@ -608,6 +608,15 @@ int sx_wifi_start(void)
         s_state.running = false;
         return map_error(err);
     }
+
+    /*
+     * Turn modem sleep off to cut receive and send latency (ESP-IDF v5.4.3 default is
+     * WIFI_PS_MIN_MODEM: the station wakes only every DTIM, about one beacon of roughly 100 ms).
+     * Cost: higher power use, acceptable because the board is mains powered. The docs say modem
+     * sleep applies to station-only mode, so in APSTA mode this call may change nothing; it is
+     * harmless either way. A failure only means the default stays, so it does not fail the start.
+     */
+    (void)esp_wifi_set_ps(WIFI_PS_NONE);
     return SX_WIFI_OK;
 }
 

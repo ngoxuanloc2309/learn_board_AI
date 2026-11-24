@@ -53,6 +53,11 @@
 #define UI_TOUCH_MARGIN     8U
 
 #define TOUCH_ERROR_REPORT_EVERY 50U
+/*
+ * One touch can look like several presses when the controller reports no point for a frame or two.
+ * A touch counts as over only after this long without a point (DESIGN, not measured).
+ */
+#define TOUCH_RELEASE_MS         300U
 #define MIC_ERROR_REPORT_EVERY   50U
 #define DRAW_WAIT_MS        100U
 
@@ -106,6 +111,8 @@ typedef struct ai_ctx {
     uint32_t     last_log_ms;
     uint32_t     wait_start_ms;
     bool         touch_down;
+    bool         no_link_logged;   /* "turn not started" already printed for the current touch */
+    uint32_t     last_touch_ms;    /* last time a touch point was seen, used only with no_link_logged */
     uint32_t     touch_fail_streak;
     uint32_t     mic_fail_streak;
 } ai_ctx_t;
@@ -326,10 +333,15 @@ static void begin_turn(ai_ctx_t *ctx)
 
     if (net != AI_NET_OK) {
         /* No link to the server (or no room in the buffer to the net task): nothing was sent, no turn starts. */
-        printf("[ai] turn %u not started: ai_net_turn_begin=%d\n", (unsigned)turn, net);
+        if (!ctx->no_link_logged) {   /* once per touch, not once per frame while the finger stays down */
+            printf("[ai] turn %u not started: ai_net_turn_begin=%d\n", (unsigned)turn, net);
+            ctx->no_link_logged = true;
+            ctx->last_touch_ms = now_ms();
+        }
         ui_text_rows(UI_STATUS_Y, UI_STATUS_ROWS, STR_NO_LINK, COLOR_RED);
         return;
     }
+    ctx->no_link_logged = false;
     ctx->turn = turn;
     /* The filter starts at the level of the last sample read, so the DC offset does not make a step. */
     sx_hpf_reset(&s_hpf, s_frame[FRAME_SAMPLES - 1U]);
@@ -476,8 +488,12 @@ static bool poll_button(ai_ctx_t *ctx)
     ctx->touch_fail_streak = 0U;
     if (count == 0U) {
         ctx->touch_down = false;
+        if (ctx->no_link_logged && ((now_ms() - ctx->last_touch_ms) >= TOUCH_RELEASE_MS)) {
+            ctx->no_link_logged = false;   /* the touch is over, the next one may print again */
+        }
         return false;
     }
+    ctx->last_touch_ms = now_ms();
     inside = (pts[0].x + UI_TOUCH_MARGIN >= UI_BTN_X) && (pts[0].x < UI_BTN_X + UI_BTN_W + UI_TOUCH_MARGIN) &&
              (pts[0].y + UI_TOUCH_MARGIN >= UI_BTN_Y) && (pts[0].y < UI_BTN_Y + UI_BTN_H + UI_TOUCH_MARGIN);
     edge = (!ctx->touch_down) && inside;

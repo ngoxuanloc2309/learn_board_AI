@@ -307,6 +307,7 @@ int ai_net_turn_begin(uint32_t turn)
     s_prod.seq = 0U;
     s_prod.turn_offered = 0U;
     s_prod.turn_dropped = 0U;
+    s_stats.buffer_min_free = APP_AI_NET_BUFFER_BYTES;   /* per turn, so each turn log shows its own low point */
     return AI_NET_OK;
 }
 

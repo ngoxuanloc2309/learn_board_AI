@@ -40,6 +40,7 @@ KIND_MIC = 0x01
 SAMPLE_RATE = 16000
 SAMPLE_BYTES = 2
 MAX_TURN_S = 60  # safety cap on one turn (disk protection), not a protocol value
+GAP_SLOW_MS = 40.0  # an arrival gap above this counts as slow (the nominal frame spacing is 20 ms)
 
 log = logging.getLogger("server")
 
@@ -66,6 +67,16 @@ class Turn:
         self.disorder = 0
         self.pcm_bytes = 0
         self.t_start = time.monotonic()
+        # Arrival timing of frames, measured when the frame reaches the application. A big gap
+        # is a stall somewhere between the board and this code (Wi-Fi, TCP Nagle or delayed ACK,
+        # or this event loop), so it does not say which. A missing frame adds 20 ms to a gap.
+        self.last_arrival = None
+        self.gap_count = 0
+        self.gap_sum = 0.0
+        self.gap_min = None
+        self.gap_max = 0.0
+        self.gap_max_seq = 0
+        self.gap_slow = 0
         self.wav = None
         if save:
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -74,7 +85,32 @@ class Turn:
             self.wav.setsampwidth(SAMPLE_BYTES)
             self.wav.setframerate(SAMPLE_RATE)
 
-    def add_frame(self, seq, pcm):
+    def note_arrival(self, seq, now):
+        """Record the time since the previous frame of this turn (the first frame has none)."""
+        if self.last_arrival is not None:
+            gap = now - self.last_arrival
+            self.gap_count += 1
+            self.gap_sum += gap
+            if self.gap_min is None or gap < self.gap_min:
+                self.gap_min = gap
+            if gap > self.gap_max:
+                self.gap_max = gap
+                self.gap_max_seq = seq
+            if gap * 1000.0 > GAP_SLOW_MS:
+                self.gap_slow += 1
+        self.last_arrival = now
+
+    def gap_summary(self):
+        if self.gap_count == 0:
+            return "arrival gaps: n/a (fewer than 2 frames)"
+        return ("arrival gaps: min %.1f ms, avg %.1f ms, max %.1f ms (at seq %d), "
+                "over %d ms: %d of %d" %
+                (self.gap_min * 1000.0, self.gap_sum / self.gap_count * 1000.0,
+                 self.gap_max * 1000.0, self.gap_max_seq, int(GAP_SLOW_MS),
+                 self.gap_slow, self.gap_count))
+
+    def add_frame(self, seq, pcm, now):
+        self.note_arrival(seq, now)
         diff = (seq - self.expected_seq) & 0xFFFF
         if diff == 0:
             self.expected_seq = (seq + 1) & 0xFFFF
@@ -218,6 +254,7 @@ class Session:
         log.info("turn %d stopped (reason=%s): %d frames, %.2f s of audio in %.2f s wall, "
                  "missing %d, out of order %d", turn.number, msg.get("reason"), turn.frames,
                  turn.seconds(), wall, turn.lost, turn.disorder)
+        log.info("turn %d %s", turn.number, turn.gap_summary())
         if turn.frames == 0:
             await self.send_error("no_speech", "no audio received", turn.number)
             return
@@ -238,6 +275,7 @@ class Session:
         log.info("turn %d aborted, file deleted", turn.number)
 
     async def on_binary(self, data):
+        now = time.monotonic()  # first thing: closest we get to the arrival time of this frame
         if len(data) < HEADER_LEN:
             await self.send_error("bad_frame", "binary frame shorter than header")
             return True
@@ -252,7 +290,7 @@ class Session:
         if self.turn is None:
             self.late_frames += 1  # protocol section 8: frames after listen_stop are ignored
             return True
-        self.turn.add_frame(seq, pcm)
+        self.turn.add_frame(seq, pcm, now)
         if self.turn.seconds() > MAX_TURN_S:
             number = self.turn.number
             self.turn.close(keep=True)
