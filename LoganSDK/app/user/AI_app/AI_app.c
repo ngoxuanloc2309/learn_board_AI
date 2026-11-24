@@ -2,6 +2,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -12,12 +13,18 @@
 #include "inmp441.h"
 #include "textdraw.h"
 #include "sx_vad.h"
+#include "sx_hpf.h"
 #include "sx_time.h"
+#include "AI_net_app.h"
 #include "AI_app.h"
 
 /* Samples of one audio frame. The microphone read of this size paces the whole loop. */
 #define FRAME_SAMPLES       ((BOARD_AUDIO_SAMPLE_RATE_HZ / 1000U) * APP_AI_FRAME_MS)
 #define READ_TIMEOUT_MS     1000U
+
+#if (((BOARD_AUDIO_SAMPLE_RATE_HZ / 1000U) * APP_AI_FRAME_MS) != AI_NET_FRAME_SAMPLES)
+#error "APP_AI_FRAME_MS and the sample rate must give AI_NET_FRAME_SAMPLES samples (20 ms at 16 kHz)"
+#endif
 
 /* RGB565 words as the screen module expects them (same values as screen_app, shown right on this board). */
 #define COLOR_BLACK         0x0000U
@@ -60,6 +67,13 @@ static const char STR_FONT_TEST[]  = "Tiếng Việt: ệ Ữ Ấ ở ặ ẫ �
 static const char STR_BTN_TALK[]   = "NÓI";
 static const char STR_BTN_STOP[]   = "DỪNG";
 static const char STR_BTN_WAIT[]   = "CHỜ";
+static const char STR_PROCESSING[] = "Đang xử lý...";
+static const char STR_NO_LINK[]    = "Chưa kết nối máy chủ.\nThử lại sau vài giây.";
+static const char STR_LINK_LOST[]  = "Mất kết nối máy chủ.\nChạm NÓI để thử lại.";
+static const char STR_NO_REPLY[]   = "Máy chủ không trả lời.\nChạm NÓI để thử lại.";
+static const char STR_SEND_FAIL[]  = "Không gửi được lượt này.\nChạm NÓI để thử lại.";
+static const char STR_SERVER_ERR[] = "Máy chủ báo lỗi: %s\nChạm NÓI để thử lại.";
+static const char STR_NO_TEXT[]    = "(không nhận ra chữ nào)";
 static const char STR_YES[]        = "có";
 static const char STR_NO[]         = "không";
 static const char STR_RESULT_FMT[] = "Lượt %u xong\nLý do: %s\nDài: %u.%02u giây\nCó tiếng nói: %s";
@@ -101,6 +115,10 @@ static int16_t    s_frame[FRAME_SAMPLES];
 static textdraw_t s_text;
 static sx_vad_t   s_vad;
 static ai_ctx_t   s_ctx;
+/* Step 3: the frame that goes to the server is a filtered COPY (the detector keeps the raw frame). */
+static int16_t    s_send[FRAME_SAMPLES];
+static sx_hpf_t   s_hpf;          /* high pass filter of the stream to the server (100 Hz) */
+static ai_net_event_t s_ev;       /* event of the net task, used by this task only */
 
 /* Prints the lowest free stack, then ends the calling task. */
 static void end_task(void)
@@ -303,8 +321,18 @@ static void enter_idle(ai_ctx_t *ctx)
 static void begin_turn(ai_ctx_t *ctx)
 {
     sx_vad_stats_t st;
+    uint32_t turn = ctx->turn + 1U;
+    int net = ai_net_turn_begin(turn);
 
-    ctx->turn++;
+    if (net != AI_NET_OK) {
+        /* No link to the server (or no room in the buffer to the net task): nothing was sent, no turn starts. */
+        printf("[ai] turn %u not started: ai_net_turn_begin=%d\n", (unsigned)turn, net);
+        ui_text_rows(UI_STATUS_Y, UI_STATUS_ROWS, STR_NO_LINK, COLOR_RED);
+        return;
+    }
+    ctx->turn = turn;
+    /* The filter starts at the level of the last sample read, so the DC offset does not make a step. */
+    sx_hpf_reset(&s_hpf, s_frame[FRAME_SAMPLES - 1U]);
     (void)sx_vad_start_turn(&s_vad);
     (void)sx_vad_get_stats(&s_vad, &st);
     ctx->turn_start_ms = now_ms();
@@ -322,6 +350,7 @@ static void end_turn(ai_ctx_t *ctx, const end_reason_t *reason)
     sx_vad_stats_t st;
     char text[160];
     uint32_t wall_ms = now_ms() - ctx->turn_start_ms;
+    int net;
 
     (void)sx_vad_get_stats(&s_vad, &st);
     sx_vad_cancel_turn(&s_vad);
@@ -333,12 +362,93 @@ static void end_turn(ai_ctx_t *ctx, const end_reason_t *reason)
     (void)snprintf(text, sizeof(text), STR_RESULT_FMT, (unsigned)ctx->turn, reason->text,
                    (unsigned)(wall_ms / 1000U), (unsigned)((wall_ms % 1000U) / 10U),
                    st.speech_started ? STR_YES : STR_NO);
+    net = ai_net_turn_end(ctx->turn, reason->name);
+    if (net != AI_NET_OK) {
+        printf("[ai] turn %u: ai_net_turn_end failed: %d\n", (unsigned)ctx->turn, net);
+        enter_idle(ctx);
+        ui_text_rows(UI_INFO_Y, UI_INFO_ROWS, text, COLOR_WHITE);
+        ui_text_rows(UI_STATUS_Y, UI_STATUS_ROWS, STR_SEND_FAIL, COLOR_RED);
+        print_stack("turn done (not sent)");
+        return;
+    }
     ctx->state = AI_STATE_WAITING;
     ctx->wait_start_ms = now_ms();
-    ui_text_rows(UI_STATUS_Y, UI_STATUS_ROWS, "", COLOR_YELLOW);
+    ui_text_rows(UI_STATUS_Y, UI_STATUS_ROWS, STR_PROCESSING, COLOR_YELLOW);
     ui_text_rows(UI_INFO_Y, UI_INFO_ROWS, text, COLOR_WHITE);
     ui_draw_button(STR_BTN_WAIT, COLOR_GRAY, COLOR_BLACK);
     print_stack("turn done");
+}
+
+/* Filters a copy of the frame (the detector keeps the raw one) and hands it to the net task. A full buffer drops it. */
+static void send_frame_to_net(void)
+{
+    (void)memcpy(s_send, s_frame, sizeof(s_send));
+    sx_hpf_process(&s_hpf, s_send, s_send, FRAME_SAMPLES);
+    /* A drop is counted on the producer side and printed at the end of the turn by the net task. */
+    (void)ai_net_turn_audio(s_send, FRAME_SAMPLES);
+}
+
+/* Leaves a turn that cannot go on (link lost, server error, no answer): tells the net task, shows why, goes IDLE. */
+static void abandon_turn(ai_ctx_t *ctx, const char *message, uint16_t color)
+{
+    if ((ctx->state == AI_STATE_LISTENING) || (ctx->state == AI_STATE_WAITING)) {
+        (void)ai_net_turn_abort(ctx->turn);
+    }
+    if (ctx->state == AI_STATE_LISTENING) {
+        sx_vad_cancel_turn(&s_vad);
+    }
+    enter_idle(ctx);
+    ui_text_rows(UI_STATUS_Y, UI_STATUS_ROWS, message, color);
+}
+
+/* Handles every event that the net task has queued. Called once per frame, before the button. */
+static void handle_net_events(ai_ctx_t *ctx)
+{
+    char text[200];
+
+    while (ai_net_poll_event(&s_ev) != 0) {
+        bool mine = (!s_ev.has_turn) || (s_ev.turn == ctx->turn);
+        bool busy = (ctx->state == AI_STATE_LISTENING) || (ctx->state == AI_STATE_WAITING);
+
+        switch (s_ev.type) {
+        case AI_BACKEND_EVENT_CONNECTED:
+            printf("[ai] server link up\n");
+            if (ctx->state == AI_STATE_IDLE) {
+                enter_idle(ctx);   /* clears an old "link lost" message */
+            }
+            break;
+        case AI_BACKEND_EVENT_DISCONNECTED:
+            printf("[ai] server link lost\n");
+            if (busy) {
+                abandon_turn(ctx, STR_LINK_LOST, COLOR_RED);
+            }
+            break;
+        case AI_BACKEND_EVENT_STT_RESULT:
+            if ((ctx->state == AI_STATE_WAITING) && s_ev.has_turn && (s_ev.turn == ctx->turn)) {
+                printf("[ai] stt turn %u (%u ms after stop): %s\n", (unsigned)s_ev.turn,
+                       (unsigned)s_ev.latency_ms, s_ev.text);
+                enter_idle(ctx);
+                ui_text_rows(UI_INFO_Y, UI_INFO_ROWS, (s_ev.text[0] != '\0') ? s_ev.text : STR_NO_TEXT, COLOR_WHITE);
+            }
+            break;
+        case AI_BACKEND_EVENT_ERROR:
+            if (busy && mine) {
+                printf("[ai] server error for turn %u: %s\n", (unsigned)ctx->turn, s_ev.code);
+                (void)snprintf(text, sizeof(text), STR_SERVER_ERR, s_ev.code);
+                abandon_turn(ctx, text, COLOR_RED);
+            }
+            break;
+        case AI_BACKEND_EVENT_LISTEN_END:
+            /* The server has enough audio. The protocol has no stop reason for it, so the turn ends as "vad". */
+            if ((ctx->state == AI_STATE_LISTENING) && mine) {
+                end_turn(ctx, &REASON_VAD);
+            }
+            break;
+        case AI_BACKEND_EVENT_NONE:
+        default:
+            break;
+        }
+    }
 }
 
 /* Reads the touch controller. Returns true once per new touch that starts on the button. */
@@ -392,8 +502,11 @@ static void log_progress(ai_ctx_t *ctx, uint32_t now)
 /* Handles the audio frame that was just read and the button, in the current state. */
 static void handle_frame(ai_ctx_t *ctx)
 {
-    bool pressed = poll_button(ctx);
+    bool pressed;
     uint32_t now = now_ms();
+
+    handle_net_events(ctx);
+    pressed = poll_button(ctx);
 
     switch (ctx->state) {
     case AI_STATE_IDLE:
@@ -405,7 +518,10 @@ static void handle_frame(ai_ctx_t *ctx)
 
     case AI_STATE_LISTENING: {
         sx_vad_event_t ev = SX_VAD_EVENT_NONE;
-        int ret = sx_vad_process(&s_vad, s_frame, FRAME_SAMPLES, &ev);
+        int ret;
+
+        send_frame_to_net();   /* every frame of the turn goes out, also the one on which the turn ends */
+        ret = sx_vad_process(&s_vad, s_frame, FRAME_SAMPLES, &ev);
 
         if (pressed) {
             end_turn(ctx, &REASON_TOUCH);
@@ -437,8 +553,9 @@ static void handle_frame(ai_ctx_t *ctx)
 
     case AI_STATE_WAITING:
         (void)sx_vad_feed_idle(&s_vad, s_frame, FRAME_SAMPLES);
-        if ((now - ctx->wait_start_ms) >= APP_AI_RESULT_HOLD_MS) {
-            enter_idle(ctx);
+        if ((now - ctx->wait_start_ms) >= APP_AI_STT_WAIT_MS) {
+            printf("[ai] turn %u: no answer in %u ms\n", (unsigned)ctx->turn, (unsigned)APP_AI_STT_WAIT_MS);
+            abandon_turn(ctx, STR_NO_REPLY, COLOR_RED);
         }
         break;
 
@@ -489,6 +606,7 @@ static void ai_task(void *arg)
     vcfg.initial_noise_rms = APP_AI_VAD_INITIAL_NOISE_RMS;
     vcfg.min_threshold_rms = APP_AI_VAD_MIN_THRESHOLD_RMS;
     vcfg.threshold_ratio_x10 = APP_AI_VAD_RATIO_X10;
+    sx_hpf_init(&s_hpf);
     ret = sx_vad_init(&s_vad, &vcfg);
     if (ret != SX_VAD_OK) {
         printf("[ai] sx_vad_init failed: %d\n", ret);
@@ -516,6 +634,10 @@ static void ai_task(void *arg)
 
 int ai_app_start(void)
 {
+    /* The net task waits for the Wi-Fi IP by itself (wifi_app_start runs in app.c). Without it no turn can start. */
+    if (ai_net_start() != AI_NET_OK) {
+        printf("[ai] ai_net_start failed, turns will not start\n");
+    }
     if (xTaskCreate(ai_task, APP_AI_TASK_NAME, APP_AI_STACK_SIZE, NULL,
                     APP_AI_TASK_PRIORITY, NULL) != pdPASS) {
         printf("[ai] cannot create the task\n");

@@ -10,7 +10,7 @@
 void app_start(void)
 {
     /* The result is already printed by wifi_app_start. A failed Wi-Fi start does not stop the device. */
-    // (void)wifi_app_start();
+    (void)wifi_app_start();
     /* http_app waits for the Wi-Fi IP by itself, so the order of these two calls does not matter. */
     // (void)http_app_start();
     /* screen_app brings up the display by itself in its own task (board_init is called there). */
@@ -31,10 +31,11 @@ void app_start(void)
      */
     // (void)storage_app_start();
     /*
-     * ai_app is step 2 of the voice test (talk button, turn state machine, voice activity detector,
-     * Vietnamese text). It owns the screen, the touch controller and the microphone, so it must not
-     * run together with screen_app, mic_app or speaker_app (the last one is switched off for this
-     * reason, and so that its tones do not reach the microphone). It uses no network.
+     * ai_app is steps 2 and 3 of the voice test (talk button, turn state machine, voice activity detector,
+     * Vietnamese text, audio stream to the server through the net task). It owns the screen, the touch
+     * controller and the microphone, so it must not run together with screen_app, mic_app or speaker_app
+     * (the last one is switched off for this reason, and so that its tones do not reach the microphone).
+     * It needs wifi_app_start above: the net task waits for the Wi-Fi IP before it connects to the server.
      */
     (void)ai_app_start();
 }

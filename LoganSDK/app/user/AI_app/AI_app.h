@@ -6,9 +6,9 @@ extern "C" {
 #endif
 
 /*
- * Step 2 of docs/Backend_Protocol.md section 13: the talk button, the turn state machine, the voice
- * activity detector and Vietnamese text on the screen. There is NO network yet. A turn only measures
- * how long the user spoke and why it ended, and shows that on the screen and in the log.
+ * Steps 2 and 3 of docs/Backend_Protocol.md section 13: the talk button, the turn state machine, the voice
+ * activity detector and Vietnamese text on the screen (step 2), and the audio stream to the server through the
+ * net task of AI_net_app (step 3). Every frame of a turn is high-pass filtered on a copy and given to the net task.
  *
  * Every number below is a DESIGN value chosen by the app, none is measured on the board.
  */
@@ -92,9 +92,9 @@ extern "C" {
 #define APP_AI_VAD_RATIO_X10 30U
 #endif
 
-/* How long the result of a turn stays on the screen before the button works again. Placeholder of step 2. */
-#ifndef APP_AI_RESULT_HOLD_MS
-#define APP_AI_RESULT_HOLD_MS 2500U
+/* How long to wait for the stt_result after listen_stop (Backend_Protocol section 7). Design value, not measured. */
+#ifndef APP_AI_STT_WAIT_MS
+#define APP_AI_STT_WAIT_MS 10000U
 #endif
 
 /*
@@ -118,12 +118,11 @@ extern "C" {
  *     when the detector sees speech and then APP_AI_VAD_END_SILENCE_MS of quiet (reason "vad"), when
  *     nobody speaks within APP_AI_VAD_WAIT_SPEECH_MS (reason "timeout"), or at APP_AI_VAD_MAX_TURN_MS
  *     (reason "max_length"). The reason names are the ones of docs/Backend_Protocol.md.
- *   WAITING: placeholder of step 2. The result of the turn (reason, length, speech seen) is shown for
- *     APP_AI_RESULT_HOLD_MS, then the state goes back to IDLE. Step 3 replaces this with the wait for
- *     the server answer.
+ *   WAITING: listen_stop was sent. The state goes back to IDLE when the stt_result arrives (the text is shown),
+ *     on a server error, when the link is lost, or after APP_AI_STT_WAIT_MS without an answer.
  * The microphone runs all the time and is read in this one task, so a screen update can delay a read.
  * Each turn prints one summary line: "[ai] turn N end reason=... wall_ms=... frames=... speech=...".
- * It does not use Wi-Fi, the speaker or the SD card. Returns 0 when the task was created, -1 when
+ * It needs wifi_app_start (the net task waits for the IP) and does not use the speaker or the SD card. Returns 0 when the task was created, -1 when
  * it could not be created. Call it once. Do not run it together with screen_app (both own the screen).
  */
 int ai_app_start(void);
